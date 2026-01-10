@@ -41,7 +41,7 @@ provisioner:
     enable_recording: true
     recordings_dir: "/tmp/sshbox_recordings"
     network_interface: "tap0"
-    socket_dir: "/tmp"
+    socket_dir: "/var/run/firecracker"
 ```
 
 ## Profile-specific Configuration
