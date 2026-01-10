@@ -71,7 +71,7 @@ sudo chroot mnt apt install -y openssh-server sudo cloud-init
 
 # Create boxuser
 sudo chroot mnt useradd -m -s /bin/bash boxuser
-sudo chroot mnt echo "boxuser ALL=(ALL) NOPASSWD:ALL" > /etc/sudoers.d/boxuser
+echo "boxuser ALL=(ALL) NOPASSWD:ALL" | sudo tee mnt/etc/sudoers.d/boxuser > /dev/null
 
 # Configure SSH
 sudo chroot mnt sed -i 's/#PermitRootLogin prohibit-password/PermitRootLogin yes/' /etc/ssh/sshd_config
