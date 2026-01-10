@@ -105,7 +105,7 @@ def validate_token(token: str) -> bool:
     """Validate HMAC token with enhanced security checks"""
     try:
         parts = token.split(':')
-        if len(parts) != 7:  # profile:ttl:timestamp:recipient_hash:notes_hash:signature
+        if len(parts) != 6:  # profile:ttl:timestamp:recipient_hash:notes_hash:signature
             logger.warning(f"Invalid token format: {token[:20]}...")
             return False
 
