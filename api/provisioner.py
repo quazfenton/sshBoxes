@@ -66,6 +66,9 @@ def provision_container():
         
         session_id = data.get('session_id')
         pubkey = data.get('pubkey')
+        
+        if not session_id or not pubkey:
+            return jsonify({'error': 'session_id and pubkey are required'}), 400
         profile = data.get('profile', 'dev')
         ttl = int(data.get('ttl', 1800))
         
