@@ -1,0 +1,18 @@
+# Dockerfile for the Provisioner service
+FROM python:3.11-slim
+
+WORKDIR /app
+
+RUN apt-get update && apt-get install -y \
+    docker.io \
+    && rm -rf /var/lib/apt/lists/*
+
+COPY requirements.txt .
+RUN pip install --no-cache-dir -r requirements.txt
+
+COPY api/provisioner.py /app/provisioner.py
+COPY scripts/ /app/scripts/
+
+EXPOSE 8081
+
+CMD ["python", "provisioner.py"]
