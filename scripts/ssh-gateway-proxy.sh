@@ -16,7 +16,7 @@ while true; do
   profile=$(echo "$body" | python3 -c "import sys,json; print(json.load(sys.stdin).get('profile','dev'))")
   ttl=$(echo "$body" | python3 -c "import sys,json; print(int(json.load(sys.stdin).get('ttl',1800)))")
   # validate token (HMAC)
-  valid=$(echo -n "$token" | python3 -c "import sys,hashlib,hmac; s='$SECRET'; t=sys.stdin.read().strip(); print('1' if hmac.compare_digest(hmac.new(s.encode(), t.encode(), hashlib.sha256).hexdigest(), t.split(':')[-1]) else '0')")
+  valid=$(echo -n "$token" | python3 -c "import sys,hashlib,hmac; s='$SECRET'; t=sys.stdin.read().strip(); parts=t.split(':'); payload=':'.join(parts[:3]); expected_sig=parts[-1] if len(parts)==4 else ''; computed_sig=hmac.new(s.encode(), payload.encode(), hashlib.sha256).hexdigest(); print('1' if len(parts)==4 and hmac.compare_digest(computed_sig, expected_sig) else '0')")
   if [ "$valid" != "1" ]; then
     echo -e "HTTP/1.1 403 Forbidden\\r\\nContent-Type: application/json\\r\\n\\r\\n{\\"error\\":\\"invalid token\\"}"
     continue
