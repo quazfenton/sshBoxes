@@ -3,6 +3,12 @@
 # Usage: ./box-provision-firecracker.sh <session_id> <pubkey> <profile> <ttl_seconds>
 
 set -euo pipefail
+umask 077
+
+if (( $# < 2 || $# > 4 )); then
+  echo "Usage: $0 <session_id> <pubkey> [profile] [ttl_seconds]" >&2
+  exit 2
+fi
 
 SESSION_ID="$1"
 
@@ -15,6 +21,10 @@ PUBKEY="$2"
 PROFILE="${3:-dev}"
 TTL="${4:-1800}"  # default 30m
 
+if [[ ! "$TTL" =~ ^[0-9]+$ ]]; then
+  echo "Error: ttl_seconds must be an integer (got: $TTL)" >&2
+  exit 2
+fi
 # Configuration
 FIRECRACKER_SOCKET="/tmp/firecracker-${SESSION_ID}.socket"
 KERNEL_IMAGE="${KERNEL_IMAGE:-/var/lib/firecracker/kernel/vmlinux}"
