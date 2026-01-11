@@ -163,7 +163,7 @@ def schedule_destroy(container_name: str, session_id: str, ttl: int):
         try:
             logger.info(f"Executing destruction for session {session_id}, container {container_name}")
             result = subprocess.run(['./scripts/box-destroy.sh', container_name],
-                                  capture_output=True, text=True)
+                                  capture_output=True, text=True, timeout=30)
 
             if result.returncode != 0:
                 logger.error(f"Destroy script failed for container {container_name}: {result.stderr}")
