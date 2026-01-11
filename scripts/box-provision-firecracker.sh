@@ -5,6 +5,12 @@
 set -euo pipefail
 
 SESSION_ID="$1"
+
+# Validate SESSION_ID contains only safe characters
+if [[ ! "$SESSION_ID" =~ ^[a-zA-Z0-9_-]+$ ]]; then
+  echo "Error: Invalid SESSION_ID. Must contain only alphanumeric characters, dashes, or underscores." >&2
+  exit 1
+fi
 PUBKEY="$2"
 PROFILE="${3:-dev}"
 TTL="${4:-1800}"  # default 30m
