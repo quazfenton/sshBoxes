@@ -30,7 +30,7 @@ app = FastAPI(title="sshBox Gateway", description="Gateway for ephemeral SSH box
 # Add middleware for security
 app.add_middleware(
     CORSMiddleware,
-    allow_origins=["*"],  # In production, specify exact origins
+    allow_origins=os.environ.get('ALLOWED_ORIGINS', '').split(',') or [],
     allow_credentials=True,
     allow_methods=["*"],
     allow_headers=["*"],
