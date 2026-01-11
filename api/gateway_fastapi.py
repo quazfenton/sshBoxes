@@ -63,6 +63,10 @@ logger.addHandler(console_handler)
 
 # Configuration
 GATEWAY_SECRET = os.environ.get('GATEWAY_SECRET', 'replace-with-secret')
+if GATEWAY_SECRET == 'replace-with-secret':
+    raise RuntimeError("GATEWAY_SECRET environment variable must be set to a secure value")
+if len(GATEWAY_SECRET) < 32:
+    logger.warning("GATEWAY_SECRET should be at least 32 characters for adequate security")
 PROVISIONER_PATH = os.environ.get('PROVISIONER_PATH', './scripts/box-provision.sh')
 
 # Connect to Redis for coordination
