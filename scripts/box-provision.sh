@@ -70,8 +70,8 @@ if ! docker exec -i "$CONTAINER_NAME" bash -lc "cat > /home/boxuser/.ssh/authori
     exit 1
 fi
 
-if ! docker exec "$CONTAINER_NAME" chown -R boxuser:boxuser /home/boxuser/.ssh 2>/dev/null && \
-   ! docker exec "$CONTAINER_NAME" chmod 700 /home/boxuser/.ssh 2>/dev/null && \
+if ! docker exec "$CONTAINER_NAME" chown -R boxuser:boxuser /home/boxuser/.ssh 2>/dev/null || \
+   ! docker exec "$CONTAINER_NAME" chmod 700 /home/boxuser/.ssh 2>/dev/null || \
    ! docker exec "$CONTAINER_NAME" chmod 600 /home/boxuser/.ssh/authorized_keys 2>/dev/null; then
     echo "Error: Failed to set proper permissions for SSH keys" >&2
     docker rm -f "$CONTAINER_NAME" > /dev/null 2>&1 || true
