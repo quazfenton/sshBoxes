@@ -6,8 +6,9 @@ RUN apt-get update && \
     mkdir /var/run/sshd
 
 # Create user with limited privileges
+# Sudoers allowlist: only package management commands are permitted
 RUN useradd -m -s /bin/bash -U -G sudo boxuser && \
-    echo "boxuser ALL=(ALL) NOPASSWD:SETENV: /usr/bin/*" > /etc/sudoers.d/boxuser && \
+    echo "boxuser ALL=(ALL) NOPASSWD:SETENV: /usr/bin/apt, /usr/bin/apt-get, /usr/bin/apt-cache, /usr/bin/dpkg, /usr/bin/pip3" > /etc/sudoers.d/boxuser && \
     chmod 440 /etc/sudoers.d/boxuser
 
 # Security hardening for SSH
