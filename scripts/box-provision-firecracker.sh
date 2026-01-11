@@ -107,11 +107,24 @@ sleep 5
 VM_IP="172.16.0.10"  # This would be determined dynamically in a real implementation
 SSH_PORT=22
 
+readonly SCRIPT_DIR="$(cd -- "$(dirname -- "${BASH_SOURCE[0]}")" && pwd -P)"
+META_PATH="/tmp/${SESSION_ID}.json"
+if [[ -L "$META_PATH" ]]; then echo "Error: refusing to write symlink: $META_PATH" >&2; exit 1; fi
+
 # record metadata
-echo "{\"session_id\":\"$SESSION_ID\",\"vm_socket\":\"$FIRECRACKER_SOCKET\",\"vm_ip\":\"$VM_IP\",\"ssh_port\":$SSH_PORT,\"ttl\":$TTL,\"profile\":\"$PROFILE\",\"created_at\":\"$(date -u +%Y-%m-%dT%H:%M:%SZ)\"}" > "/tmp/${SESSION_ID}.json"
+jq -n \
+  --arg session_id "$SESSION_ID" \
+  --arg vm_socket "$FIRECRACKER_SOCKET" \
+  --arg vm_ip "$VM_IP" \
+  --arg profile "$PROFILE" \
+  --arg created_at "$(date -u +%Y-%m-%dT%H:%M:%SZ)" \
+  --argjson ssh_port "$SSH_PORT" \
+  --argjson ttl "$TTL" \
+  '{session_id:$session_id,vm_socket:$vm_socket,vm_ip:$vm_ip,ssh_port:$ssh_port,ttl:$ttl,profile:$profile,created_at:$created_at}' \
+  > "$META_PATH"
 
 # schedule destroy
-( sleep "$TTL"; ./box-destroy-firecracker.sh "$SESSION_ID" "/tmp/${SESSION_ID}.json" ) & disown
+( sleep "$TTL"; "$SCRIPT_DIR/box-destroy-firecracker.sh" "$SESSION_ID" "$META_PATH" ) & disown
 
 # output connect info
 echo "{\"host\":\"$VM_IP\",\"port\":$SSH_PORT,\"user\":\"boxuser\",\"session_id\":\"$SESSION_ID\"}"
