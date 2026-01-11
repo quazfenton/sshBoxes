@@ -44,24 +44,28 @@ cp "$ROOTFS_IMAGE" "$SESSION_ROOTFS"
 # Mount the filesystem temporarily
 MOUNT_POINT="${SESSION_DIR}/mnt"
 mkdir -p "$MOUNT_POINT"
+mounted=0
+cleanup() {
+  if (( mounted )); then sudo umount "$MOUNT_POINT" || true; fi
+}
+trap cleanup EXIT
+
 sudo mount -o loop "$SESSION_ROOTFS" "$MOUNT_POINT"
+mounted=1
 
 # Create SSH directory and add the public key
 sudo mkdir -p "$MOUNT_POINT/home/boxuser/.ssh"
-echo "$PUBKEY" | sudo tee "$MOUNT_POINT/home/boxuser/.ssh/authorized_keys"
+echo "$PUBKEY" | sudo tee "$MOUNT_POINT/home/boxuser/.ssh/authorized_keys" >/dev/null
 sudo chown -R 1000:1000 "$MOUNT_POINT/home/boxuser/.ssh"
 sudo chmod 700 "$MOUNT_POINT/home/boxuser/.ssh"
 sudo chmod 600 "$MOUNT_POINT/home/boxuser/.ssh/authorized_keys"
 
-# Also add to root user for flexibility
-sudo mkdir -p "$MOUNT_POINT/root/.ssh"
-echo "$PUBKEY" | sudo tee "$MOUNT_POINT/root/.ssh/authorized_keys"
-sudo chmod 700 "$MOUNT_POINT/root/.ssh"
-sudo chmod 600 "$MOUNT_POINT/root/.ssh/authorized_keys"
+# Consider *not* adding to root; if you must, at least gate behind an env flag.
 
 # Unmount
 sudo umount "$MOUNT_POINT"
-
+mounted=0
+trap - EXIT
 # Prepare Firecracker configuration
 cat > "${SESSION_DIR}/config.json" <<EOF
 {
