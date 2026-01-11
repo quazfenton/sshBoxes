@@ -88,7 +88,8 @@ def handle_request():
         
         # Schedule destruction
         metadata_file = f"/tmp/{session_id}.json"
-        schedule_destroy(connection_info['session_id'], metadata_file, ttl)
+        container_name = f"box_{session_id}"
+        schedule_destroy(container_name, metadata_file, ttl)
         
         return jsonify(connection_info)
     
