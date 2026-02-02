@@ -1,0 +1,172 @@
+version: '3.8'
+
+services:
+  # SSH Gateway Service
+  gateway:
+    build:
+      context: .
+      dockerfile: images/Dockerfile.gateway
+    ports:
+      - "8080:8080"
+    environment:
+      - GATEWAY_SECRET=${GATEWAY_SECRET:-mysecret}
+      - GATEWAY_PORT=8080
+      - PROVISIONER_PATH=/app/scripts/box-provision.sh
+      - DB_TYPE=sqlite
+      - SQLITE_PATH=/tmp/sshbox_sessions.db
+      - LOGS_DIR=/app/logs
+    volumes:
+      - ./scripts:/app/scripts:ro
+      - /var/run/docker.sock:/var/run/docker.sock:ro
+      - /tmp:/tmp:rw
+      - gateway_logs:/app/logs
+    depends_on:
+      - redis
+    networks:
+      - sshbox-net
+    deploy:
+      resources:
+        limits:
+          cpus: '1.0'
+          memory: 1G
+        reservations:
+          cpus: '0.25'
+          memory: 256M
+    restart: unless-stopped
+
+  # Redis for session storage and coordination
+  redis:
+    image: redis:7-alpine
+    command: redis-server --maxmemory 256mb --maxmemory-policy allkeys-lru
+    networks:
+      - sshbox-net
+    deploy:
+      resources:
+        limits:
+          cpus: '0.5'
+          memory: 256M
+        reservations:
+          cpus: '0.1'
+          memory: 128M
+    restart: unless-stopped
+
+  # Database for audit logs and metadata
+  db:
+    image: postgres:15-alpine
+    environment:
+      - POSTGRES_DB=sshbox
+      - POSTGRES_USER=sshbox_user
+      - POSTGRES_PASSWORD=${POSTGRES_PASSWORD:-sshbox_pass}
+      # PostgreSQL performance tuning
+      - POSTGRES_INITDB_ARGS="--auth-host=scram-sha-256"
+    volumes:
+      - postgres_data:/var/lib/postgresql/data
+      - ./init.sql:/docker-entrypoint-initdb.d/init.sql
+    networks:
+      - sshbox-net
+    deploy:
+      resources:
+        limits:
+          cpus: '1.0'
+          memory: 1G
+        reservations:
+          cpus: '0.5'
+          memory: 512M
+    restart: unless-stopped
+
+  # Container provisioner service
+  provisioner:
+    build:
+      context: .
+      dockerfile: images/Dockerfile.provisioner
+    volumes:
+      - /var/run/docker.sock:/var/run/docker.sock:ro
+      - /tmp:/tmp:rw
+    environment:
+      - REDIS_URL=redis://redis:6379
+      - DB_HOST=db
+      - DB_USER=sshbox_user
+      - DB_PASS=${DB_PASS:-sshbox_pass}
+      - DB_NAME=sshbox
+    depends_on:
+      - redis
+      - db
+    networks:
+      - sshbox-net
+    deploy:
+      resources:
+        limits:
+          cpus: '1.0'
+          memory: 512M
+        reservations:
+          cpus: '0.25'
+          memory: 128M
+    restart: unless-stopped
+
+  # Session recorder service
+  recorder:
+    build:
+      context: .
+      dockerfile: images/Dockerfile.recorder
+    volumes:
+      - recordings_volume:/recordings
+      - /tmp:/tmp:rw
+      - recorder_logs:/app/logs
+    environment:
+      - RECORDINGS_DIR=/recordings
+      - DB_HOST=db
+      - DB_USER=sshbox_user
+      - DB_PASS=${DB_PASS:-sshbox_pass}
+      - DB_NAME=sshbox
+      - LOGS_DIR=/app/logs
+    depends_on:
+      - db
+    networks:
+      - sshbox-net
+    deploy:
+      resources:
+        limits:
+          cpus: '0.5'
+          memory: 256M
+        reservations:
+          cpus: '0.1'
+          memory: 64M
+    restart: unless-stopped
+
+  # Web dashboard for managing boxes
+  dashboard:
+    build:
+      context: .
+      dockerfile: images/Dockerfile.dashboard
+    ports:
+      - "3000:3000"
+    environment:
+      - GATEWAY_URL=http://gateway:8080
+      - DB_HOST=db
+      - DB_USER=sshbox_user
+      - DB_PASS=${DB_PASS:-sshbox_pass}
+      - DB_NAME=sshbox
+    depends_on:
+      - gateway
+      - db
+    networks:
+      - sshbox-net
+    deploy:
+      resources:
+        limits:
+          cpus: '0.5'
+          memory: 128M
+        reservations:
+          cpus: '0.1'
+          memory: 64M
+    restart: unless-stopped
+
+volumes:
+  postgres_data:
+  recordings_volume:
+  gateway_logs:
+  recorder_logs:
+
+networks:
+  sshbox-net:
+    driver: bridge

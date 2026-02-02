@@ -1,0 +1,110 @@
+# Dockerfile for the Dashboard service
+FROM node:18-alpine
+
+WORKDIR /app
+
+# Create a simple dashboard placeholder
+RUN mkdir -p /app/src && echo '
+<!DOCTYPE html>
+<html>
+<head>
+    <title>sshBox Dashboard</title>
+    <style>
+        body { font-family: Arial, sans-serif; margin: 40px; }
+        .container { max-width: 800px; margin: 0 auto; }
+        .card { border: 1px solid #ddd; padding: 20px; margin: 10px 0; border-radius: 5px; }
+        button { background: #007cba; color: white; padding: 10px 20px; border: none; border-radius: 3px; cursor: pointer; }
+        button:hover { background: #005a87; }
+    </style>
+</head>
+<body>
+    <div class="container">
+        <h1>sshBox Dashboard</h1>
+        <div class="card">
+            <h3>Create New Box</h3>
+            <form id="createBoxForm">
+                <label>Profile:</label>
+                <select name="profile">
+                    <option value="dev">Dev (30 min)</option>
+                    <option value="debug">Debug (60 min)</option>
+                    <option value="secure-shell">Secure Shell (10 min)</option>
+                </select><br><br>
+                
+                <label>TTL (minutes):</label>
+                <input type="number" name="ttl" value="30" min="1" max="60"><br><br>
+                
+                <button type="submit">Create Box</button>
+            </form>
+        </div>
+        
+        <div class="card">
+            <h3>Active Sessions</h3>
+            <div id="sessionsList">No active sessions</div>
+        </div>
+    </div>
+    
+    <script>
+        document.getElementById("createBoxForm").addEventListener("submit", async function(e) {
+            e.preventDefault();
+            
+            const formData = new FormData(e.target);
+            const profile = formData.get("profile");
+            const ttl = formData.get("ttl") * 60; // Convert to seconds
+            
+            try {
+                const response = await fetch("/api/create_invite", {
+                    method: "POST",
+                    headers: {"Content-Type": "application/json"},
+                    body: JSON.stringify({profile, ttl})
+                });
+                
+                const result = await response.json();
+                alert("Invite token: " + result.token);
+            } catch (error) {
+                console.error("Error:", error);
+                alert("Error creating invite");
+            }
+        });
+        
+        async function loadSessions() {
+            try {
+                const response = await fetch("/api/sessions");
+                const sessions = await response.json();
+                
+                const sessionsDiv = document.getElementById("sessionsList");
+                if (sessions.length === 0) {
+                    sessionsDiv.innerHTML = "No active sessions";
+                } else {
+                    // Helper function to escape HTML
+                    function escapeHtml(unsafe) {
+                        return unsafe
+                            .replace(/&/g, "&amp;")
+                            .replace(/</g, "&lt;")
+                            .replace(/>/g, "&gt;")
+                            .replace(/"/g, "&quot;")
+                            .replace(/'/g, "&#039;");
+                    }
+
+                    sessionsDiv.innerHTML = sessions.map(session =>
+                        `<div class="session-item">
+                            <strong>${escapeHtml(session.session_id)}</strong>: ${escapeHtml(session.profile)},
+                            expires in ${Math.floor(session.time_left / 60)}m ${session.time_left % 60}s
+                        </div>`
+                    ).join("");
+                }
+            } catch (error) {
+                console.error("Error loading sessions:", error);
+            }
+        }
+        
+        // Load sessions periodically
+        setInterval(loadSessions, 5000);
+        loadSessions();
+    </script>
+</body>
+</html>
+' > /app/src/index.html
+
+EXPOSE 3000
+
+CMD ["npx", "serve", "/app/src"]
