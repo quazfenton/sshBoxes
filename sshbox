@@ -1,0 +1,145 @@
+#!/usr/bin/env bash
+# Main entrypoint for sshBox
+# This script provides a unified interface to the sshBox system
+
+set -euo pipefail
+
+SCRIPT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
+PROJECT_ROOT="$(dirname "$SCRIPT_DIR")"
+
+show_help() {
+    echo "sshBox - Ephemeral SSH Boxes"
+    echo ""
+    echo "Usage: $0 [command] [options]"
+    echo ""
+    echo "Commands:"
+    echo "  start-gateway     Start the SSH gateway server"
+    echo "  create-invite     Create an invite token"
+    echo "  connect           Connect to a box using a token"
+    echo "  build-image       Build the base Docker image"
+    echo "  help              Show this help message"
+    echo ""
+    echo "Examples:"
+    echo "  $0 start-gateway"
+    echo "  $0 create-invite --secret mysecret --profile dev --ttl 600"
+    echo "  $0 connect --token <token> --gateway http://localhost:8080"
+}
+
+start_gateway() {
+    echo "Starting SSH gateway server..."
+    export GATEWAY_SECRET="${GATEWAY_SECRET:-mysecret}"
+    export GATEWAY_PORT="${GATEWAY_PORT:-8080}"
+    export PROVISIONER_PATH="$PROJECT_ROOT/scripts/box-provision.sh"
+    
+    if command -v python3 &> /dev/null; then
+        python3 "$PROJECT_ROOT/api/gateway.py"
+    else
+        echo "Error: Python3 is required to run the gateway"
+        exit 1
+    fi
+}
+
+create_invite() {
+    local secret=""
+    local profile="dev"
+    local ttl=600
+    
+    while [[ $# -gt 0 ]]; do
+        case $1 in
+            --secret)
+                secret="$2"
+                shift 2
+                ;;
+            --profile)
+                profile="$2"
+                shift 2
+                ;;
+            --ttl)
+                ttl="$2"
+                shift 2
+                ;;
+            *)
+                echo "Unknown option: $1"
+                exit 1
+                ;;
+        esac
+    done
+    
+    if [ -z "$secret" ]; then
+        echo "Error: --secret is required"
+        exit 1
+    fi
+    
+    python3 "$PROJECT_ROOT/scripts/box-invite.py" create --secret "$secret" --profile "$profile" --ttl "$ttl"
+}
+
+connect() {
+    local token=""
+    local gateway="http://localhost:8080"
+    local privkey_path="./id_box"
+    
+    while [[ $# -gt 0 ]]; do
+        case $1 in
+            --token)
+                token="$2"
+                shift 2
+                ;;
+            --gateway)
+                gateway="$2"
+                shift 2
+                ;;
+            --privkey-path)
+                privkey_path="$2"
+                shift 2
+                ;;
+            *)
+                echo "Unknown option: $1"
+                exit 1
+                ;;
+        esac
+    done
+    
+    if [ -z "$token" ]; then
+        echo "Error: --token is required"
+        exit 1
+    fi
+    
+    python3 "$PROJECT_ROOT/scripts/box-invite.py" connect --token "$token" --gateway "$gateway" --privkey-path "$privkey_path"
+}
+
+build_image() {
+    echo "Building Docker image..."
+    if command -v docker &> /dev/null; then
+        docker build -t ephemeral-box:latest "$PROJECT_ROOT/images/"
+        echo "Docker image built successfully"
+    else
+        echo "Error: Docker is required to build the image"
+        exit 1
+    fi
+}
+
+case "${1:-}" in
+    start-gateway)
+        shift
+        start_gateway
+        ;;
+    create-invite)
+        shift
+        create_invite "$@"
+        ;;
+    connect)
+        shift
+        connect "$@"
+        ;;
+    build-image)
+        build_image
+        ;;
+    help|"")
+        show_help
+        ;;
+    *)
+        echo "Unknown command: $1"
+        show_help
+        exit 1
+        ;;
+esac
