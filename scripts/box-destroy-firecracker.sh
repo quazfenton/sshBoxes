@@ -4,8 +4,19 @@
 
 set -euo pipefail
 
+if [ $# -lt 1 ]; then
+  echo "Usage: $0 <session_id> [metadata_file]" >&2
+  exit 1
+fi
+
 SESSION_ID="$1"
 META="${2:-}"
+
+# Validate SESSION_ID contains only safe characters to prevent path traversal
+if [[ ! "$SESSION_ID" =~ ^[a-zA-Z0-9_-]+$ ]]; then
+  echo "Error: Invalid SESSION_ID. Must contain only alphanumeric characters, dashes, or underscores." >&2
+  exit 1
+fi
 
 # Determine socket path
 FIRECRACKER_SOCKET="/tmp/firecracker-${SESSION_ID}.socket"

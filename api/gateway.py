@@ -24,17 +24,27 @@ def validate_token(token):
         parts = token.split(':')
         if len(parts) != 4:
             return False
-        
-        profile, ttl, timestamp, signature = parts
-        expected_payload = f"{profile}:{ttl}:{timestamp}"
+
+        profile, ttl_str, timestamp_str, signature = parts
+
+        # Validate TTL and timestamp are integers
+        ttl = int(ttl_str)
+        timestamp = int(timestamp_str)
+
+        # Check if token has expired
+        current_time = int(time.time())
+        if current_time - timestamp > ttl:
+            return False  # Token has expired
+
+        expected_payload = f"{profile}:{ttl_str}:{timestamp_str}"
         expected_signature = hmac.new(
-            GATEWAY_SECRET.encode(), 
-            expected_payload.encode(), 
+            GATEWAY_SECRET.encode(),
+            expected_payload.encode(),
             hashlib.sha256
         ).hexdigest()
-        
+
         return hmac.compare_digest(signature, expected_signature)
-    except:
+    except (ValueError, TypeError):
         return False
 
 def schedule_destroy(container_name, metadata_file, ttl):
@@ -64,7 +74,15 @@ def handle_request():
         # Validate token
         if not validate_token(token):
             return jsonify({'error': 'Invalid token'}), 403
-        
+
+        # Validate pubkey
+        if not pubkey or not isinstance(pubkey, str) or len(pubkey.strip()) == 0:
+            return jsonify({'error': 'Missing or invalid pubkey'}), 400
+
+        # Basic SSH public key format validation
+        if not pubkey.startswith(('ssh-rsa ', 'ssh-ed25519 ', 'ecdsa-sha2-nistp256 ', 'ecdsa-sha2-nistp384 ', 'ecdsa-sha2-nistp521 ', 'sk-ecdsa-sha2-nistp256@openssh.com ', 'sk-ssh-ed25519@openssh.com ')):
+            return jsonify({'error': 'Invalid SSH public key format'}), 400
+
         # Generate session ID
         session_id = str(int(time.time() * 1000000))  # microsecond precision
         

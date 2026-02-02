@@ -139,7 +139,7 @@ def list_sessions(gateway_url, status_filter=None):
     List active sessions from the gateway
     """
     try:
-        resp = requests.get(f"{gateway_url}/sessions")
+        resp = requests.get(f"{gateway_url}/sessions", timeout=10)
         if resp.status_code != 200:
             print(f"Error getting sessions: {resp.text}")
             return
@@ -169,8 +169,8 @@ def destroy_session(gateway_url, session_id):
     Request to destroy a specific session
     """
     try:
-        resp = requests.post(f"{gateway_url}/destroy", 
-                           json={"session_id": session_id})
+        resp = requests.post(f"{gateway_url}/destroy",
+                           json={"session_id": session_id}, timeout=10)
         if resp.status_code != 200:
             print(f"Error destroying session: {resp.text}")
             return

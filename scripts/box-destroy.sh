@@ -19,7 +19,7 @@ if ! command -v docker &> /dev/null; then
 fi
 
 # Check if container exists before attempting to remove
-CONTAINER_EXISTS=$(docker ps -a --format '{{.Names}}' 2>/dev/null | grep -c "^${CONTAINER}$" || echo "0")
+CONTAINER_EXISTS=$(docker ps -a --format '{{.Names}}' 2>/dev/null | grep -Fc "$CONTAINER" || echo "0")
 
 if [ "$CONTAINER_EXISTS" -gt 0 ]; then
     if ! docker rm -f "$CONTAINER" >/dev/null 2>&1; then

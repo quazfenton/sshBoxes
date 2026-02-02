@@ -71,7 +71,7 @@ sudo chroot mnt apt install -y openssh-server sudo cloud-init
 
 # Create boxuser
 sudo chroot mnt useradd -m -s /bin/bash boxuser
-echo "boxuser ALL=(ALL) NOPASSWD:ALL" | sudo tee mnt/etc/sudoers.d/boxuser > /dev/null
+sudo chroot mnt sh -c 'echo "boxuser ALL=(ALL) NOPASSWD:ALL" > /etc/sudoers.d/boxuser'
 
 # Configure SSH
 sudo chroot mnt sed -i 's/#PermitRootLogin prohibit-password/PermitRootLogin yes/' /etc/ssh/sshd_config
@@ -95,7 +95,6 @@ sudo ip link set br0 up
 sudo ip tuntap add dev tap0 mode tap
 sudo ip link set tap0 master br0
 sudo ip link set tap0 up
-sudo ip addr add 172.16.0.2/24 dev tap0
 ```
 
 ## Scripts

@@ -75,9 +75,19 @@ RUN mkdir -p /app/src && echo '
                 if (sessions.length === 0) {
                     sessionsDiv.innerHTML = "No active sessions";
                 } else {
-                    sessionsDiv.innerHTML = sessions.map(session => 
+                    // Helper function to escape HTML
+                    function escapeHtml(unsafe) {
+                        return unsafe
+                            .replace(/&/g, "&amp;")
+                            .replace(/</g, "&lt;")
+                            .replace(/>/g, "&gt;")
+                            .replace(/"/g, "&quot;")
+                            .replace(/'/g, "&#039;");
+                    }
+
+                    sessionsDiv.innerHTML = sessions.map(session =>
                         `<div class="session-item">
-                            <strong>${session.session_id}</strong>: ${session.profile}, 
+                            <strong>${escapeHtml(session.session_id)}</strong>: ${escapeHtml(session.profile)},
                             expires in ${Math.floor(session.time_left / 60)}m ${session.time_left % 60}s
                         </div>`
                     ).join("");

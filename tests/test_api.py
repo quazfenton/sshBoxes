@@ -93,7 +93,8 @@ class TestTokenValidation:
         result = validate_token(token)
         # This will return False because the signature won't match, but it should parse correctly
         # The important thing is that it doesn't crash
-        
+        assert result is False  # Expected to return False due to invalid signature
+
         # Test invalid format
         invalid_token = "invalid:format"
         result = validate_token(invalid_token)

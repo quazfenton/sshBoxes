@@ -12,6 +12,12 @@ RUN pip install --no-cache-dir -r requirements.txt
 
 COPY api/sqlite_session_recorder.py /app/main.py
 
+# Create a non-root user
+RUN useradd --create-home --shell /bin/bash --uid 1001 appuser && \
+    chown -R appuser:appuser /app
+
+USER appuser
+
 EXPOSE 8082
 
 CMD ["uvicorn", "main:app", "--host", "0.0.0.0", "--port", "8082"]

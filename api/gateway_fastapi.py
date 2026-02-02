@@ -203,7 +203,7 @@ def schedule_destroy(container_name: str, session_id: str, ttl: int):
 
 @app.post("/request", summary="Request a new SSH box")
 @limiter.limit("5/minute")  # Limit to 5 requests per minute per IP
-async def handle_request(request: TokenRequest, background_tasks: BackgroundTasks):
+async def handle_request(req: Request, request: TokenRequest, background_tasks: BackgroundTasks):
     try:
         logger.info(f"Received request for new SSH box, profile: {request.profile}, session_id: {int(time.time() * 1000000)}")
 
@@ -312,7 +312,7 @@ async def handle_request(request: TokenRequest, background_tasks: BackgroundTask
 
 @app.get("/sessions", summary="List active sessions")
 @limiter.limit("10/minute")  # Limit to 10 requests per minute per IP
-async def list_sessions(status: Optional[str] = None):
+async def list_sessions(req: Request, status: Optional[str] = None):
     try:
         if DB_TYPE == 'postgresql':
             conn = get_db_connection()
@@ -391,7 +391,7 @@ async def list_sessions(status: Optional[str] = None):
 
 @app.post("/destroy", summary="Destroy a specific session")
 @limiter.limit("20/hour")  # Limit to 20 requests per hour per IP
-async def destroy_session(destroy_request: DestroyRequest):
+async def destroy_session(req: Request, destroy_request: DestroyRequest):
     try:
         # Get container name from DB
         if DB_TYPE == 'postgresql':

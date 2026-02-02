@@ -90,10 +90,19 @@ def client_connect(token, gateway, privkey_path=None):
             with open(pubkey_path, 'r') as f:
                 pubkey = f.read().strip()
 
+        # Parse token to extract profile and ttl
+        token_parts = token.split(':')
+        if len(token_parts) >= 3:
+            token_profile = token_parts[0]
+            token_ttl = int(token_parts[1])
+        else:
+            print(f"Error: Invalid token format")
+            return
+
         # POST to gateway
         try:
             resp = requests.post(f"{gateway}/request",
-                               json={"token": token, "pubkey": pubkey, "profile": "dev", "ttl": 300},
+                               json={"token": token, "pubkey": pubkey, "profile": token_profile, "ttl": token_ttl},
                                timeout=30)  # Increased timeout
         except requests.exceptions.RequestException as e:
             print(f"Gateway connection error: {e}")

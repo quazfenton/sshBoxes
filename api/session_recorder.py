@@ -7,6 +7,7 @@ import os
 import json
 import subprocess
 import time
+import re
 from datetime import datetime
 from pathlib import Path
 
@@ -17,6 +18,10 @@ class SessionRecorder:
     
     def start_recording(self, session_id, user_id, profile, ttl):
         """Start recording a session using the 'script' command"""
+        # Validate session_id to prevent path traversal
+        if not re.match(r'^[a-zA-Z0-9_-]+$', session_id):
+            raise ValueError("Invalid session_id: contains unsafe characters")
+
         recording_file = self.recordings_dir / f"{session_id}.typescript"
         timing_file = self.recordings_dir / f"{session_id}.timing"
         
@@ -76,6 +81,10 @@ class SessionRecorder:
             metadata = json.load(f)
         
         recording_file = Path(metadata["recording_file"])
+        # Validate that recording_file is within the expected recordings directory to prevent arbitrary file read
+        if not os.path.abspath(recording_file).startswith(os.path.abspath(self.recordings_dir)):
+            return None
+
         if recording_file.exists():
             with open(recording_file, 'r', encoding='utf-8', errors='ignore') as f:
                 content = f.read()

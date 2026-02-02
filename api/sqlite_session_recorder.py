@@ -294,10 +294,10 @@ class SQLiteSessionRecorder:
         with sqlite3.connect(self.db_path) as conn:
             cursor = conn.cursor()
             cursor.execute("""
-                SELECT session_id FROM sessions 
-                WHERE created_at < datetime('now', '-{} days')
+                SELECT session_id FROM sessions
+                WHERE created_at < datetime('now', '-' || ? || ' days')
                 AND (status = 'ended' OR status = 'destroyed')
-            """.format(days))
+            """, (days,))
             
             old_sessions = cursor.fetchall()
         

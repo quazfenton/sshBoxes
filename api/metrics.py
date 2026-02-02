@@ -144,12 +144,15 @@ def record_request(endpoint: str, success: bool = True):
         metrics.increment_counter("requests", "successful")
     else:
         metrics.increment_counter("requests", "failed")
-    
-    # Record by endpoint
-    if endpoint in metrics.metrics["requests"]["by_endpoint"]:
-        metrics.metrics["requests"]["by_endpoint"][endpoint] += 1
-    else:
-        metrics.metrics["requests"]["by_endpoint"][endpoint] = 1
+
+    # Record by endpoint - use thread-safe method
+    with metrics.lock:
+        if endpoint in metrics.metrics["requests"]["by_endpoint"]:
+            metrics.metrics["requests"]["by_endpoint"][endpoint] += 1
+        else:
+            metrics.metrics["requests"]["by_endpoint"][endpoint] = 1
+        metrics._update_timestamp()
+        metrics._save_metrics()
 
 
 def record_session_creation(profile: str = "unknown"):

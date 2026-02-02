@@ -56,7 +56,7 @@ services:
     environment:
       - POSTGRES_DB=sshbox
       - POSTGRES_USER=sshbox_user
-      - POSTGRES_PASSWORD=sshbox_pass
+      - POSTGRES_PASSWORD=${POSTGRES_PASSWORD:-sshbox_pass}
       # PostgreSQL performance tuning
       - POSTGRES_INITDB_ARGS="--auth-host=scram-sha-256"
     volumes:
@@ -86,7 +86,7 @@ services:
       - REDIS_URL=redis://redis:6379
       - DB_HOST=db
       - DB_USER=sshbox_user
-      - DB_PASS=sshbox_pass
+      - DB_PASS=${DB_PASS:-sshbox_pass}
       - DB_NAME=sshbox
     depends_on:
       - redis
@@ -116,7 +116,7 @@ services:
       - RECORDINGS_DIR=/recordings
       - DB_HOST=db
       - DB_USER=sshbox_user
-      - DB_PASS=sshbox_pass
+      - DB_PASS=${DB_PASS:-sshbox_pass}
       - DB_NAME=sshbox
       - LOGS_DIR=/app/logs
     depends_on:
@@ -144,7 +144,7 @@ services:
       - GATEWAY_URL=http://gateway:8080
       - DB_HOST=db
       - DB_USER=sshbox_user
-      - DB_PASS=sshbox_pass
+      - DB_PASS=${DB_PASS:-sshbox_pass}
       - DB_NAME=sshbox
     depends_on:
       - gateway

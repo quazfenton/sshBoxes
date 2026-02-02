@@ -109,5 +109,5 @@ KERNEL_IMAGE=/var/lib/firecracker/kernel/vmlinux
 ROOTFS_IMAGE=/var/lib/firecracker/rootfs/rootfs.ext4
 VM_MEM_SIZE=2048                   # in MB
 VM_VCPU_COUNT=2
-FIRECRACKER_SOCKET_DIR=/tmp
+FIRECRACKER_SOCKET_DIR=/var/run/firecracker
 ```

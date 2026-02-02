@@ -57,6 +57,19 @@ class SQLiteConnectionPool:
         try:
             yield conn
         finally:
+            # Rollback any uncommitted transactions to ensure clean state
+            try:
+                conn.rollback()
+            except:
+                # If rollback fails, we'll close the connection instead
+                try:
+                    conn.close()
+                except:
+                    pass  # Ignore errors when closing
+                with self.lock:
+                    self.active_connections -= 1
+                return  # Exit early since connection is unusable
+
             # Return connection to pool
             with self.lock:
                 if len(self.pool) < self.max_connections:

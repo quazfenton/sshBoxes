@@ -65,7 +65,6 @@ sudo chmod 600 "$MOUNT_POINT/home/boxuser/.ssh/authorized_keys"
 # Unmount
 sudo umount "$MOUNT_POINT"
 mounted=0
-trap - EXIT
 # Prepare Firecracker configuration
 cat > "${SESSION_DIR}/config.json" <<EOF
 {

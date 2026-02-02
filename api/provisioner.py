@@ -8,6 +8,8 @@ import json
 import subprocess
 import time
 import threading
+import urllib.parse
+import re
 from datetime import datetime
 from pathlib import Path
 import redis
@@ -17,9 +19,14 @@ from flask import Flask, request, jsonify
 app = Flask(__name__)
 
 # Connect to Redis for coordination
+redis_url = os.environ.get('REDIS_URL', 'redis://localhost:6379')
+parsed_url = urllib.parse.urlparse(redis_url)
+redis_host = parsed_url.hostname or 'localhost'
+redis_port = parsed_url.port or 6379
+
 redis_client = redis.Redis(
-    host=os.environ.get('REDIS_URL', 'redis://localhost:6379').split('//')[1].split(':')[0],
-    port=int(os.environ.get('REDIS_URL', 'redis://localhost:6379').split('//')[1].split(':')[1]),
+    host=redis_host,
+    port=redis_port,
     decode_responses=True
 )
 
@@ -42,14 +49,16 @@ def schedule_destroy(container_name, session_id, ttl):
             
             # Update session status in DB
             conn = get_db_connection()
-            cur = conn.cursor()
-            cur.execute(
-                "UPDATE sessions SET status = 'destroyed', ended_at = %s WHERE session_id = %s",
-                (datetime.utcnow().isoformat(), session_id)
-            )
-            conn.commit()
-            cur.close()
-            conn.close()
+            try:
+                cur = conn.cursor()
+                cur.execute(
+                    "UPDATE sessions SET status = 'destroyed', ended_at = %s WHERE session_id = %s",
+                    (datetime.utcnow().isoformat(), session_id)
+                )
+                conn.commit()
+                cur.close()
+            finally:
+                conn.close()
         except subprocess.CalledProcessError as e:
             print(f"Failed to destroy container {container_name}: {e}")
         except Exception as e:
@@ -66,12 +75,24 @@ def provision_container():
         
         session_id = data.get('session_id')
         pubkey = data.get('pubkey')
-        
-        if not session_id or not pubkey:
-            return jsonify({'error': 'session_id and pubkey are required'}), 400
+
+        if not session_id or not isinstance(session_id, str) or len(session_id.strip()) == 0:
+            return jsonify({'error': 'session_id is required and must be a non-empty string'}), 400
+
+        if not pubkey or not isinstance(pubkey, str) or len(pubkey.strip()) == 0:
+            return jsonify({'error': 'pubkey is required and must be a non-empty string'}), 400
+
+        # Validate session_id contains only safe characters to prevent command injection
+        if not re.match(r'^[a-zA-Z0-9_-]+$', session_id):
+            return jsonify({'error': 'session_id contains invalid characters'}), 400
+
+        # Basic SSH public key format validation
+        if not pubkey.startswith(('ssh-rsa ', 'ssh-ed25519 ', 'ecdsa-sha2-nistp256 ', 'ecdsa-sha2-nistp384 ', 'ecdsa-sha2-nistp521 ', 'sk-ecdsa-sha2-nistp256@openssh.com ', 'sk-ssh-ed25519@openssh.com ')):
+            return jsonify({'error': 'Invalid SSH public key format'}), 400
+
         profile = data.get('profile', 'dev')
         ttl = int(data.get('ttl', 1800))
-        
+
         # Generate container name
         container_name = f"box_{session_id}"
         
