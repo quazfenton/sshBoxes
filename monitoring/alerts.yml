@@ -1,0 +1,213 @@
+# Prometheus Alert Rules for sshBox
+
+groups:
+  - name: sshbox_alerts
+    interval: 30s
+    rules:
+      # ============================================================================
+      # Gateway Alerts
+      # ============================================================================
+      - alert: GatewayHighErrorRate
+        expr: |
+          sum(rate(sshbox_requests_total{status="failed"}[5m])) 
+          / sum(rate(sshbox_requests_total[5m])) > 0.05
+        for: 5m
+        labels:
+          severity: critical
+        annotations:
+          summary: "High error rate in SSH Gateway"
+          description: "Error rate is {{ $value | humanizePercentage }} over the last 5 minutes"
+
+      - alert: GatewayHighLatency
+        expr: histogram_quantile(0.95, sum(rate(http_request_duration_seconds_bucket[5m])) by (le)) > 1
+        for: 5m
+        labels:
+          severity: warning
+        annotations:
+          summary: "High latency in SSH Gateway"
+          description: "95th percentile latency is {{ $value | humanizeDuration }}"
+
+      - alert: GatewayCircuitBreakerOpen
+        expr: sshbox_circuit_breaker_state{state="open"} == 1
+        for: 1m
+        labels:
+          severity: critical
+        annotations:
+          summary: "Circuit breaker is OPEN"
+          description: "Circuit breaker {{ $labels.name }} is open, requests are being rejected"
+
+      # ============================================================================
+      # Session Alerts
+      # ============================================================================
+      - alert: HighSessionCreationRate
+        expr: sum(rate(sshbox_sessions_created[5m])) > 10
+        for: 5m
+        labels:
+          severity: warning
+        annotations:
+          summary: "High session creation rate"
+          description: "{{ $value }} sessions created per second over the last 5 minutes"
+
+      - alert: SessionProvisioningSlow
+        expr: sshbox_avg_provision_time > 5
+        for: 5m
+        labels:
+          severity: warning
+        annotations:
+          summary: "Slow session provisioning"
+          description: "Average provisioning time is {{ $value | humanizeDuration }}"
+
+      # ============================================================================
+      # Database Alerts
+      # ============================================================================
+      - alert: PostgreSQLHighConnections
+        expr: pg_stat_activity_count > 150
+        for: 5m
+        labels:
+          severity: warning
+        annotations:
+          summary: "PostgreSQL high connection count"
+          description: "PostgreSQL has {{ $value }} active connections"
+
+      - alert: PostgreSQLLongRunningQueries
+        expr: pg_stat_activity_max_tx_duration > 300
+        for: 5m
+        labels:
+          severity: warning
+        annotations:
+          summary: "PostgreSQL long running queries"
+          description: "Maximum transaction duration is {{ $value | humanizeDuration }}"
+
+      - alert: PostgreSQLReplicationLag
+        expr: pg_replication_lag > 30
+        for: 5m
+        labels:
+          severity: critical
+        annotations:
+          summary: "PostgreSQL replication lag"
+          description: "Replication lag is {{ $value | humanizeDuration }}"
+
+      # ============================================================================
+      # Redis Alerts
+      # ============================================================================
+      - alert: RedisHighMemoryUsage
+        expr: redis_memory_used_bytes / redis_memory_max_bytes > 0.9
+        for: 5m
+        labels:
+          severity: warning
+        annotations:
+          summary: "Redis high memory usage"
+          description: "Redis memory usage is {{ $value | humanizePercentage }}"
+
+      - alert: RedisConnectedClientsHigh
+        expr: redis_connected_clients > 100
+        for: 5m
+        labels:
+          severity: warning
+        annotations:
+          summary: "Redis high client count"
+          description: "Redis has {{ $value }} connected clients"
+
+      # ============================================================================
+      # Recording Alerts
+      # ============================================================================
+      - alert: RecordingStorageLow
+        expr: |
+          (node_filesystem_avail_bytes{mountpoint="/recordings"} 
+           / node_filesystem_size_bytes{mountpoint="/recordings"}) < 0.1
+        for: 5m
+        labels:
+          severity: critical
+        annotations:
+          summary: "Recording storage low"
+          description: "Only {{ $value | humanizePercentage }} of recording storage remaining"
+
+      # ============================================================================
+      # Infrastructure Alerts
+      # ============================================================================
+      - alert: ContainerHighMemory
+        expr: container_memory_usage_bytes / container_spec_memory_limit_bytes > 0.9
+        for: 5m
+        labels:
+          severity: warning
+        annotations:
+          summary: "Container high memory usage"
+          description: "Container {{ $labels.name }} memory usage is {{ $value | humanizePercentage }}"
+
+      - alert: ContainerHighCPU
+        expr: rate(container_cpu_usage_seconds_total[5m]) / container_spec_cpu_quota * 100000 > 0.9
+        for: 5m
+        labels:
+          severity: warning
+        annotations:
+          summary: "Container high CPU usage"
+          description: "Container {{ $labels.name }} CPU usage is above 90%"
+
+      # ============================================================================
+      # Security Alerts
+      # ============================================================================
+      - alert: HighPolicyDenialRate
+        expr: sum(rate(policy_decisions_total{decision="false"}[5m])) > 5
+        for: 5m
+        labels:
+          severity: warning
+        annotations:
+          summary: "High policy denial rate"
+          description: "{{ $value }} policy denials per second"
+
+      - alert: HighQuotaExceededRate
+        expr: sum(rate(sshbox_errors_total{type="quota_exceeded"}[5m])) > 10
+        for: 5m
+        labels:
+          severity: warning
+        annotations:
+          summary: "High quota exceeded rate"
+          description: "{{ $value }} quota exceeded errors per second"
+
+      - alert: TokenValidationFailures
+        expr: sum(rate(sshbox_errors_total{type="token_validation_failed"}[5m])) > 20
+        for: 5m
+        labels:
+          severity: critical
+        annotations:
+          summary: "High token validation failure rate"
+          description: "{{ $value }} token validation failures per second - possible attack"
+
+      # ============================================================================
+      # Availability Alerts
+      # ============================================================================
+      - alert: GatewayDown
+        expr: up{job="sshbox-gateway"} == 0
+        for: 1m
+        labels:
+          severity: critical
+        annotations:
+          summary: "SSH Gateway is down"
+          description: "Gateway instance has been down for more than 1 minute"
+
+      - alert: DatabaseDown
+        expr: up{job="postgresql"} == 0
+        for: 1m
+        labels:
+          severity: critical
+        annotations:
+          summary: "PostgreSQL database is down"
+          description: "Database has been down for more than 1 minute"
+
+      - alert: RedisDown
+        expr: up{job="redis"} == 0
+        for: 1m
+        labels:
+          severity: critical
+        annotations:
+          summary: "Redis is down"
+          description: "Redis has been down for more than 1 minute"
+
+      - alert: OPADown
+        expr: up{job="opa"} == 0
+        for: 1m
+        labels:
+          severity: critical
+        annotations:
+          summary: "OPA policy engine is down"
+          description: "OPA has been down for more than 1 minute"

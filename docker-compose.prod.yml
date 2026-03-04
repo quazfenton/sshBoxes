@@ -1,0 +1,468 @@
+# ============================================================================
+# sshBox Production Docker Compose Configuration
+# High-availability deployment with monitoring, policy engine, and backups
+# ============================================================================
+
+version: '3.8'
+
+x-logging: &default-logging
+  driver: "json-file"
+  options:
+    max-size: "10m"
+    max-file: "5"
+    labels: "service"
+
+x-healthcheck-gateway: &gateway-healthcheck
+  test: ["CMD", "curl", "-f", "http://localhost:8080/health"]
+  interval: 30s
+  timeout: 10s
+  retries: 3
+  start_period: 40s
+
+x-healthcheck-db: &db-healthcheck
+  test: ["CMD-SHELL", "pg_isready -U sshbox_user -d sshbox"]
+  interval: 10s
+  timeout: 5s
+  retries: 5
+  start_period: 30s
+
+x-healthcheck-redis: &redis-healthcheck
+  test: ["CMD", "redis-cli", "ping"]
+  interval: 10s
+  timeout: 5s
+  retries: 5
+
+services:
+  # ============================================================================
+  # API Gateway (High Availability)
+  # ============================================================================
+  gateway:
+    build:
+      context: .
+      dockerfile: images/Dockerfile.gateway
+    deploy:
+      replicas: 3
+      update_config:
+        parallelism: 1
+        delay: 10s
+        failure_action: rollback
+      resources:
+        limits:
+          cpus: '2.0'
+          memory: 2G
+        reservations:
+          cpus: '0.5'
+          memory: 512M
+      restart_policy:
+        condition: on-failure
+        delay: 5s
+        max_attempts: 3
+        window: 120s
+    environment:
+      # Application
+      - SSHBOX_APP_NAME=sshBox Gateway
+      - SSHBOX_DEBUG=false
+      - SSHBOX_LOG_LEVEL=INFO
+      - SSHBOX_LOG_FORMAT=json
+      - LOGS_DIR=/var/log/sshbox
+      
+      # Security
+      - SSHBOX_SECURITY__GATEWAY_SECRET=${GATEWAY_SECRET:?Must be set}
+      - SSHBOX_SECURITY__TOKEN_MAX_AGE_SECONDS=300
+      - SSHBOX_SECURITY__ALLOWED_PROFILES=dev,debug,secure-shell,privileged
+      
+      # Database
+      - SSHBOX_DB__DB_TYPE=postgresql
+      - SSHBOX_DB__POSTGRES_HOST=db
+      - SSHBOX_DB__POSTGRES_PORT=5432
+      - SSHBOX_DB__POSTGRES_USER=sshbox_user
+      - SSHBOX_DB__POSTGRES_PASS=${DB_PASS:?Must be set}
+      - SSHBOX_DB__POSTGRES_DB=sshbox
+      - SSHBOX_DB__POOL_SIZE=20
+      
+      # Redis
+      - REDIS_HOST=redis
+      - REDIS_PORT=6379
+      - REDIS_PASS=${REDIS_PASS:-redis_pass}
+      
+      # Provisioner
+      - SSHBOX_PROVISIONER__PROVISIONER_TYPE=container
+      - SSHBOX_PROVISIONER__CONTAINER_IMAGE=sshbox-base:latest
+      - SSHBOX_PROVISIONER__ENABLE_RECORDING=true
+      - PROVISIONER_PATH=/app/scripts/box-provision.sh
+      
+      # Recording
+      - SSHBOX_RECORDING__ENABLE_RECORDING=true
+      - SSHBOX_RECORDING__RECORDINGS_DIR=/recordings
+      - SSHBOX_RECORDING__RETENTION_DAYS=7
+      
+      # Rate Limiting
+      - SSHBOX_RATELIMIT__ENABLED=true
+      - SSHBOX_RATELIMIT__REQUEST_LIMIT=10/minute
+      - SSHBOX_RATELIMIT__SESSIONS_LIMIT=20/minute
+      - SSHBOX_RATELIMIT__DESTROY_LIMIT=30/hour
+      - SSHBOX_RATELIMIT__TRUSTED_IPS=${TRUSTED_IPS:-}
+      
+      # Network
+      - SSHBOX_NETWORK__GATEWAY_PORT=8080
+      - SSHBOX_NETWORK__CORS_ENABLED=true
+      - ALLOWED_ORIGINS=${ALLOWED_ORIGINS:-}
+      
+      # Policy Engine
+      - OPA_URL=http://opa:8181
+      - POLICY_FALLBACK=true
+      
+      # Quota
+      - QUOTA_DB_PATH=/var/lib/sshbox/quotas.db
+    volumes:
+      - /var/run/docker.sock:/var/run/docker.sock:ro
+      - /tmp:/tmp:rw
+      - recordings_volume:/recordings
+      - gateway_logs:/var/log/sshbox
+      - quota_data:/var/lib/sshbox
+    networks:
+      - sshbox-net
+    depends_on:
+      db:
+        condition: service_healthy
+      redis:
+        condition: service_healthy
+    healthcheck:
+      <<: *gateway-healthcheck
+    logging: *default-logging
+    restart: unless-stopped
+
+  # ============================================================================
+  # Session Recorder Service
+  # ============================================================================
+  recorder:
+    build:
+      context: .
+      dockerfile: images/Dockerfile.recorder
+    deploy:
+      replicas: 2
+      resources:
+        limits:
+          cpus: '1.0'
+          memory: 1G
+        reservations:
+          cpus: '0.25'
+          memory: 256M
+    environment:
+      - RECORDINGS_DIR=/recordings
+      - RECORDER_DB_PATH=/var/lib/sshbox/recorder.db
+      - LOGS_DIR=/var/log/sshbox
+      - SSHBOX_RECORDING__ENABLE_RECORDING=true
+      - SSHBOX_RECORDING__RETENTION_DAYS=7
+    volumes:
+      - recordings_volume:/recordings
+      - recorder_logs:/var/log/sshbox
+      - recorder_data:/var/lib/sshbox
+    networks:
+      - sshbox-net
+    depends_on:
+      - db
+    healthcheck:
+      test: ["CMD", "curl", "-f", "http://localhost:8082/health"]
+      interval: 30s
+      timeout: 10s
+      retries: 3
+    logging: *default-logging
+    restart: unless-stopped
+
+  # ============================================================================
+  # PostgreSQL Database (Primary)
+  # ============================================================================
+  db:
+    image: postgres:15-alpine
+    environment:
+      - POSTGRES_DB=sshbox
+      - POSTGRES_USER=sshbox_user
+      - POSTGRES_PASSWORD=${DB_PASS:?Must be set}
+      - POSTGRES_INITDB_ARGS=--auth-host=scram-sha-256
+      # Performance tuning
+      - POSTGRES_MAX_CONNECTIONS=200
+      - POSTGRES_SHARED_BUFFERS=256MB
+      - POSTGRES_EFFECTIVE_CACHE_SIZE=768MB
+      - POSTGRES_WORK_MEM=4MB
+      - POSTGRES_MAINTENANCE_WORK_MEM=64MB
+    volumes:
+      - postgres_data:/var/lib/postgresql/data
+      - ./init.sql:/docker-entrypoint-initdb.d/init.sql:ro
+      - postgres_backups:/backups
+    networks:
+      - sshbox-net
+    deploy:
+      resources:
+        limits:
+          cpus: '2.0'
+          memory: 4G
+        reservations:
+          cpus: '1.0'
+          memory: 2G
+    healthcheck:
+      <<: *db-healthcheck
+    logging: *default-logging
+    restart: unless-stopped
+
+  # ============================================================================
+  # Redis (Cache and Session Storage)
+  # ============================================================================
+  redis:
+    image: redis:7-alpine
+    command: >
+      redis-server
+      --maxmemory 512mb
+      --maxmemory-policy allkeys-lru
+      --appendonly yes
+      --appendfsync everysec
+      --requirepass ${REDIS_PASS:-redis_pass}
+    volumes:
+      - redis_data:/data
+    networks:
+      - sshbox-net
+    deploy:
+      resources:
+        limits:
+          cpus: '1.0'
+          memory: 512M
+        reservations:
+          cpus: '0.25'
+          memory: 128M
+    healthcheck:
+      <<: *redis-healthcheck
+    logging: *default-logging
+    restart: unless-stopped
+
+  # ============================================================================
+  # Open Policy Agent (OPA) - Policy Engine
+  # ============================================================================
+  opa:
+    image: openpolicyagent/opa:0.60.0
+    command:
+      - "run"
+      - "--server"
+      - "--log-level=info"
+      - "--log-format=json"
+      - "--set=services.sshbox_policy.url=http://policy-loader:8080"
+      - "--set=bundles.sshbox_policy.service=sshbox_policy"
+      - "--set=bundles.sshbox_policy.resource=bundle.tar.gz"
+      - "--set=bundles.sshbox_policy.persist=true"
+    volumes:
+      - opa_data:/opa
+    networks:
+      - sshbox-net
+    deploy:
+      resources:
+        limits:
+          cpus: '0.5'
+          memory: 256M
+        reservations:
+          cpus: '0.1'
+          memory: 64M
+    healthcheck:
+      test: ["CMD", "curl", "-f", "http://localhost:8181/health"]
+      interval: 30s
+      timeout: 10s
+      retries: 3
+    logging: *default-logging
+    restart: unless-stopped
+
+  # ============================================================================
+  # Policy Loader (Sidecar for OPA)
+  # ============================================================================
+  policy-loader:
+    image: python:3.11-slim
+    working_dir: /policies
+    command: >
+      python -m http.server 8080
+    volumes:
+      - ./policies:/policies:ro
+    networks:
+      - sshbox-net
+    deploy:
+      resources:
+        limits:
+          cpus: '0.1'
+          memory: 64M
+    logging: *default-logging
+    restart: unless-stopped
+
+  # ============================================================================
+  # Prometheus (Metrics Collection)
+  # ============================================================================
+  prometheus:
+    image: prom/prometheus:v2.48.0
+    volumes:
+      - ./monitoring/prometheus.yml:/etc/prometheus/prometheus.yml:ro
+      - ./monitoring/alerts.yml:/etc/prometheus/alerts.yml:ro
+      - prometheus_data:/prometheus
+    command:
+      - '--config.file=/etc/prometheus/prometheus.yml'
+      - '--storage.tsdb.path=/prometheus'
+      - '--storage.tsdb.retention.time=30d'
+      - '--web.console.libraries=/etc/prometheus/console_libraries'
+      - '--web.console.templates=/etc/prometheus/consoles'
+      - '--web.enable-lifecycle'
+      - '--web.enable-admin-api'
+    networks:
+      - sshbox-net
+    deploy:
+      resources:
+        limits:
+          cpus: '1.0'
+          memory: 2G
+        reservations:
+          cpus: '0.5'
+          memory: 1G
+    healthcheck:
+      test: ["CMD", "wget", "-q", "--spider", "http://localhost:9090/-/healthy"]
+      interval: 30s
+      timeout: 10s
+      retries: 3
+    logging: *default-logging
+    restart: unless-stopped
+
+  # ============================================================================
+  # Grafana (Dashboards)
+  # ============================================================================
+  grafana:
+    image: grafana/grafana:10.2.0
+    volumes:
+      - grafana_data:/var/lib/grafana
+      - ./monitoring/grafana/dashboards:/etc/grafana/dashboards:ro
+      - ./monitoring/grafana/provisioning:/etc/grafana/provisioning:ro
+    environment:
+      - GF_SECURITY_ADMIN_USER=${GRAFANA_ADMIN_USER:-admin}
+      - GF_SECURITY_ADMIN_PASSWORD=${GRAFANA_ADMIN_PASS:-admin}
+      - GF_INSTALL_PLUGINS=grafana-clock-panel,grafana-piechart-panel
+      - GF_SERVER_ROOT_URL=${GRAFANA_URL:-http://localhost:3000}
+      - GF_LOG_LEVEL=info
+    networks:
+      - sshbox-net
+    depends_on:
+      - prometheus
+    deploy:
+      resources:
+        limits:
+          cpus: '0.5'
+          memory: 512M
+        reservations:
+          cpus: '0.25'
+          memory: 256M
+    ports:
+      - "3000:3000"
+    logging: *default-logging
+    restart: unless-stopped
+
+  # ============================================================================
+  # pgBackRest (Database Backups)
+  # ============================================================================
+  pgbackrest:
+    image: pgbackrest/pgbackrest:2.47
+    volumes:
+      - postgres_data:/var/lib/postgresql/data:ro
+      - postgres_backups:/backups
+      - ./monitoring/pgbackrest.conf:/etc/pgbackrest/pgbackrest.conf:ro
+    environment:
+      - PGBACKREST_STANZA=sshbox
+      - PGBACKREST_REPO1_PATH=/backups
+      - PGBACKREST_REPO1_RETENTION_FULL=7
+      - PGBACKREST_REPO1_RETENTION_DIFF=7
+    networks:
+      - sshbox-net
+    deploy:
+      resources:
+        limits:
+          cpus: '0.5'
+          memory: 512M
+    logging: *default-logging
+    restart: unless-stopped
+
+  # ============================================================================
+  # Cleanup Service (Scheduled Jobs)
+  # ============================================================================
+  cleanup:
+    image: python:3.11-slim
+    working_dir: /app
+    command: >
+      python -c "
+      import schedule, time, os, sys
+      sys.path.insert(0, '/app')
+      from api.sqlite_session_recorder import SQLiteSessionRecorder
+      
+      def cleanup_job():
+          recorder = SQLiteSessionRecorder(
+              db_path=os.environ.get('RECORDER_DB_PATH', '/var/lib/sshbox/recorder.db'),
+              recordings_dir=os.environ.get('RECORDINGS_DIR', '/recordings')
+          )
+          recorder.cleanup_old_recordings(days=int(os.environ.get('RETENTION_DAYS', 7)))
+          print('Cleanup completed')
+      
+      schedule.every(6).hours.do(cleanup_job)
+      while True:
+          schedule.run_pending()
+          time.sleep(60)
+      "
+    volumes:
+      - ./api:/app/api:ro
+      - recordings_volume:/recordings
+    environment:
+      - RECORDINGS_DIR=/recordings
+      - RETENTION_DAYS=7
+    networks:
+      - sshbox-net
+    deploy:
+      resources:
+        limits:
+          cpus: '0.25'
+          memory: 128M
+    logging: *default-logging
+    restart: unless-stopped
+
+# ============================================================================
+# Volumes
+# ============================================================================
+volumes:
+  postgres_data:
+    driver: local
+  postgres_backups:
+    driver: local
+  redis_data:
+    driver: local
+  recordings_volume:
+    driver: local
+  gateway_logs:
+    driver: local
+  recorder_logs:
+    driver: local
+  grafana_data:
+    driver: local
+  prometheus_data:
+    driver: local
+  opa_data:
+    driver: local
+  quota_data:
+    driver: local
+
+# ============================================================================
+# Networks
+# ============================================================================
+networks:
+  sshbox-net:
+    driver: overlay
+    attachable: true
+    ipam:
+      config:
+        - subnet: 10.0.0.0/24
+
+# ============================================================================
+# Secrets (for Docker Swarm)
+# ============================================================================
+secrets:
+  gateway_secret:
+    external: true
+  db_password:
+    external: true
+  redis_password:
+    external: true
