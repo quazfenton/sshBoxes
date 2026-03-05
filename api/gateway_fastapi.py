@@ -132,11 +132,14 @@ def get_gateway_secret() -> str:
 
 
 # Load configuration
-try:
-    GATEWAY_SECRET = get_gateway_secret()
-except ConfigurationError as e:
-    logger.error(f"Configuration error: {e.message}")
-    raise
+_gateway_secret: Optional[str] = None
+
+
+def get_gateway_secret_lazy() -> str:
+    global _gateway_secret
+    if _gateway_secret is None:
+        _gateway_secret = get_gateway_secret()
+    return _gateway_secret
 
 PROVISIONER_PATH = os.environ.get('PROVISIONER_PATH', './scripts/box-provision.sh')
 DB_TYPE = os.environ.get('DB_TYPE', 'sqlite')
@@ -322,7 +325,7 @@ def validate_token(token: str) -> tuple[bool, Optional[str]]:
         # Validate signature using constant-time comparison
         expected_payload = f"{profile}:{ttl_str}:{timestamp_str}:{recipient_hash}:{notes_hash}"
         expected_signature = hmac.new(
-            GATEWAY_SECRET.encode(),
+            get_gateway_secret_lazy().encode(),
             expected_payload.encode(),
             hashlib.sha256
         ).hexdigest()

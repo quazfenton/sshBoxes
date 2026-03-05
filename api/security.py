@@ -159,6 +159,9 @@ def validate_token(token: str, secret: Optional[str] = None, settings: Optional[
     
     if secret is None:
         secret = settings.gateway_secret
+
+    if hasattr(secret, 'get_secret_value'):
+        secret = secret.get_secret_value()
     
     # Parse token
     try:
@@ -183,8 +186,14 @@ def validate_token(token: str, secret: Optional[str] = None, settings: Optional[
         raise TokenValidationError("Invalid TTL", "INVALID_TTL")
     
     # Validate TTL is within allowed range
-    if ttl < settings.allowed_profiles[0] and ttl > settings.max_ttl if hasattr(settings, 'max_ttl') else 7200:
-        logger.warning(f"TTL {ttl} outside allowed range")
+    max_ttl = getattr(settings, 'max_ttl', 7200)
+    min_ttl = 60
+    if ttl < min_ttl or ttl > max_ttl:
+        logger.warning(f"TTL {ttl} outside allowed range [{min_ttl}, {max_ttl}]")
+        raise TokenValidationError(
+            f"TTL must be between {min_ttl} and {max_ttl} seconds",
+            "INVALID_TTL_RANGE"
+        )
     
     # Validate timestamp is numeric
     try:
