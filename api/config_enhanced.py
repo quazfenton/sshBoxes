@@ -41,7 +41,21 @@ class SecurityConfig:
         if not self.gateway_secret:
             self.gateway_secret = os.environ.get('SSHBOX_SECURITY_GATEWAY_SECRET', '')
         if self.gateway_secret and len(self.gateway_secret) < self.secret_min_length:
-            logger.warning(f"Gateway secret is too short ({len(self.gateway_secret)} chars, minimum {self.secret_min_length})")
+            # SECURITY FIX: Reject weak secrets instead of just warning
+            raise ValueError(f"Gateway secret must be at least {self.secret_min_length} characters (got {len(self.gateway_secret)})")
+        
+        # Additional secret strength validation
+        if self.gateway_secret:
+            has_upper = any(c.isupper() for c in self.gateway_secret)
+            has_lower = any(c.islower() for c in self.gateway_secret)
+            has_digit = any(c.isdigit() for c in self.gateway_secret)
+            has_special = any(c in '!@#$%^&*()_+-=[]{}|;:,.<>?' for c in self.gateway_secret)
+            complexity_score = sum([has_upper, has_lower, has_digit, has_special])
+            
+            if complexity_score < 3:
+                raise ValueError(
+                    "Gateway secret must contain at least 3 of: uppercase, lowercase, digits, special characters"
+                )
 
 
 @dataclass

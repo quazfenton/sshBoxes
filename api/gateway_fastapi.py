@@ -411,6 +411,157 @@ def get_db_cursor():
 # Background Tasks
 # ============================================================================
 
+async def cleanup_dead_letter_queue_task():
+    """
+    Background task to clean up dead letter queue.
+    
+    Runs every 24 hours to remove old entries.
+    """
+    while True:
+        try:
+            await asyncio.sleep(24 * 60 * 60)  # Run every 24 hours
+            logger.info("Running dead letter queue cleanup...")
+            cleanup_dead_letter_queue()
+        except Exception as e:
+            logger.error(f"Dead letter queue cleanup task error: {e}")
+
+
+@app.on_event("startup")
+async def startup_event():
+    """Start background tasks on startup"""
+    # Start dead letter queue cleanup task
+    asyncio.create_task(cleanup_dead_letter_queue_task())
+    logger.info("Started dead letter queue cleanup background task")
+
+# ============================================================================
+# Redis Session Cache with Invalidation
+# ============================================================================
+
+def cache_session_state(session_id: str, state: dict, ttl: int = 300):
+    """
+    Cache session state in Redis for fast lookups.
+    
+    Args:
+        session_id: Session ID
+        state: Session state dictionary
+        ttl: Cache TTL in seconds (default: 5 minutes)
+    """
+    if redis_client is None:
+        logger.debug("Redis not available, skipping session cache")
+        return
+    
+    try:
+        cache_key = f"session:{session_id}"
+        redis_client.setex(cache_key, ttl, json.dumps(state))
+        logger.debug(f"Cached session state: {session_id}")
+    except Exception as e:
+        logger.error(f"Failed to cache session: {e}")
+
+
+def get_cached_session_state(session_id: str) -> Optional[dict]:
+    """
+    Get cached session state from Redis.
+    
+    Args:
+        session_id: Session ID
+        
+    Returns:
+        Session state dictionary or None if not cached
+    """
+    if redis_client is None:
+        return None
+    
+    try:
+        cache_key = f"session:{session_id}"
+        cached = redis_client.get(cache_key)
+        
+        if cached:
+            logger.debug(f"Cache hit for session: {session_id}")
+            return json.loads(cached)
+        
+        logger.debug(f"Cache miss for session: {session_id}")
+        return None
+    except Exception as e:
+        logger.error(f"Failed to get cached session: {e}")
+        return None
+
+
+def invalidate_session_cache(session_id: str):
+    """
+    Invalidate cached session state.
+    
+    Called when session state changes to prevent stale cache.
+    
+    Args:
+        session_id: Session ID to invalidate
+    """
+    if redis_client is None:
+        return
+    
+    try:
+        cache_key = f"session:{session_id}"
+        redis_client.delete(cache_key)
+        logger.debug(f"Invalidated session cache: {session_id}")
+    except Exception as e:
+        logger.error(f"Failed to invalidate session cache: {e}")
+
+
+def cache_sessions_list(sessions: list, ttl: int = 60):
+    """
+    Cache list of all sessions.
+    
+    Args:
+        sessions: List of session dictionaries
+        ttl: Cache TTL in seconds (default: 1 minute)
+    """
+    if redis_client is None:
+        return
+    
+    try:
+        cache_key = "sessions:all"
+        redis_client.setex(cache_key, ttl, json.dumps(sessions))
+        logger.debug(f"Cached sessions list ({len(sessions)} sessions)")
+    except Exception as e:
+        logger.error(f"Failed to cache sessions list: {e}")
+
+
+def get_cached_sessions_list() -> Optional[list]:
+    """
+    Get cached list of all sessions.
+    
+    Returns:
+        List of session dictionaries or None if not cached
+    """
+    if redis_client is None:
+        return None
+    
+    try:
+        cache_key = "sessions:all"
+        cached = redis_client.get(cache_key)
+        
+        if cached:
+            logger.debug("Cache hit for sessions list")
+            return json.loads(cached)
+        
+        logger.debug("Cache miss for sessions list")
+        return None
+    except Exception as e:
+        logger.error(f"Failed to get cached sessions list: {e}")
+        return None
+
+
+def invalidate_all_sessions_cache():
+    """Invalidate cached list of all sessions"""
+    if redis_client is None:
+        return
+    
+    try:
+        cache_key = "sessions:all"
+        redis_client.delete(cache_key)
+        logger.debug("Invalidated all sessions cache")
+    except Exception as e:
+        logger.error(f"Failed to invalidate sessions cache: {e}")
+
 from tenacity import retry, stop_after_attempt, wait_exponential
 
 @retry(
@@ -436,13 +587,14 @@ def destroy_container_with_retry(container_name: str) -> subprocess.CompletedPro
 def add_to_dead_letter_queue(session_id: str, container_name: str, error: str):
     """
     Add failed destruction to dead letter queue for manual intervention.
-    
+
     Stores in Redis for later review and manual cleanup.
+    Auto-cleanup: Entries older than 7 days are automatically removed.
     """
     if redis_client is None:
         logger.error(f"Dead letter queue unavailable (Redis not connected): {session_id}")
         return
-    
+
     try:
         dead_letter_entry = {
             "session_id": session_id,
@@ -450,21 +602,61 @@ def add_to_dead_letter_queue(session_id: str, container_name: str, error: str):
             "error": error,
             "timestamp": datetime.now(timezone.utc).isoformat(),
             "retry_attempts": 3,
-            "status": "pending_manual_cleanup"
+            "status": "pending_manual_cleanup",
+            "auto_cleanup_at": (datetime.now(timezone.utc) + timedelta(days=7)).isoformat()
         }
-        
+
         redis_client.lpush(
             "sshbox:dead_letter:destroy",
             json.dumps(dead_letter_entry)
         )
-        
+
         # Keep only last 1000 entries
         redis_client.ltrim("sshbox:dead_letter:destroy", 0, 999)
         
+        # Set expiry on the dead letter queue (7 days)
+        redis_client.expire("sshbox:dead_letter:destroy", 7 * 24 * 60 * 60)
+
         logger.warning(f"Added to dead letter queue: {session_id}")
-        
+
     except Exception as e:
         logger.error(f"Failed to add to dead letter queue: {e}")
+
+
+def cleanup_dead_letter_queue():
+    """
+    Clean up old entries from dead letter queue.
+    
+    Removes entries older than 7 days.
+    Should be called periodically (e.g., daily cron job).
+    """
+    if redis_client is None:
+        return
+    
+    try:
+        now = datetime.now(timezone.utc)
+        dlq = redis_client.lrange("sshbox:dead_letter:destroy", 0, -1)
+        
+        cleaned = []
+        for entry_json in dlq:
+            try:
+                entry = json.loads(entry_json)
+                cleanup_at = datetime.fromisoformat(entry.get("auto_cleanup_at", ""))
+                
+                if cleanup_at.replace(tzinfo=timezone.utc) <= now:
+                    # Entry should be cleaned up
+                    redis_client.lrem("sshbox:dead_letter:destroy", 1, entry_json)
+                    cleaned.append(entry["session_id"])
+                    logger.info(f"Cleaned up dead letter entry: {entry['session_id']}")
+            except (json.JSONDecodeError, ValueError):
+                # Invalid entry, remove it
+                redis_client.lrem("sshbox:dead_letter:destroy", 1, entry_json)
+        
+        if cleaned:
+            logger.info(f"Dead letter queue cleanup complete: removed {len(cleaned)} entries")
+        
+    except Exception as e:
+        logger.error(f"Dead letter queue cleanup failed: {e}")
 
 
 def schedule_destroy(container_name: str, session_id: str, ttl: int):
@@ -982,9 +1174,13 @@ async def destroy_session(req: Request, destroy_request: DestroyRequest):
         # Update session status in DB
         update_session_status(destroy_request.session_id, 'destroyed')
         record_session_destruction()
+        
+        # CACHE INVALIDATION: Invalidate session cache on destroy
+        invalidate_session_cache(destroy_request.session_id)
+        invalidate_all_sessions_cache()
 
         logger.info(f"Session {destroy_request.session_id} destroyed successfully")
-        
+
         return {
             "message": f"Session {destroy_request.session_id} destroyed successfully",
             "session_id": destroy_request.session_id
