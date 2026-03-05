@@ -10,8 +10,9 @@ import time
 import json
 import subprocess
 import threading
-from datetime import datetime, timedelta
-from typing import Optional, List, Dict, Any
+import asyncio
+from datetime import datetime, timedelta, timezone
+from typing import Optional, List, Dict, Any, cast
 from contextlib import contextmanager
 import redis
 from fastapi import FastAPI, HTTPException, BackgroundTasks, Request, status
@@ -44,12 +45,15 @@ from api.metrics import (
     record_session_destruction,
     record_error,
     record_timing,
-    metrics,
+    get_metrics_collector,
 )
+from api.db_utils import get_db_cursor
+from api.security import InputValidator
 from api.connection_pool import get_db_connection
 
 # Initialize logging
 logger = setup_logging("gateway", log_level=logging.INFO)
+metrics = get_metrics_collector()
 
 # Initialize FastAPI app
 app = FastAPI(
@@ -78,12 +82,12 @@ try:
     limiter = Limiter(key_func=get_remote_address)
     app.state.limiter = limiter
 
-    def rate_limit_handler(request: Request, exc: RateLimitExceeded) -> JSONResponse:
+    def rate_limit_handler(request: Request, exc: Exception) -> JSONResponse:
         return JSONResponse(
             status_code=429,
             content={
                 "error": "RATE_LIMIT_EXCEEDED",
-                "message": str(exc.detail),
+                "message": str(getattr(exc, 'detail', exc)),
                 "retry_after": getattr(exc, 'retry_after', None)
             }
         )
@@ -382,29 +386,7 @@ def validate_session_id(session_id: str) -> bool:
 # Database Operations
 # ============================================================================
 
-@contextmanager
-def get_db_cursor():
-    """Context manager for database cursor with error handling"""
-    conn = None
-    cursor = None
-    try:
-        conn = get_db_connection()
-        cursor = conn.cursor()
-        yield cursor
-        conn.commit()
-    except Exception as e:
-        if conn:
-            conn.rollback()
-        logger.error(f"Database error: {e}")
-        raise DatabaseError(
-            reason=str(e),
-            operation="database_query"
-        )
-    finally:
-        if cursor:
-            cursor.close()
-        if conn:
-            conn.close()
+from api.db_utils import get_db_cursor
 
 
 # ============================================================================
@@ -477,7 +459,7 @@ def get_cached_session_state(session_id: str) -> Optional[dict]:
         
         if cached:
             logger.debug(f"Cache hit for session: {session_id}")
-            return json.loads(cached)
+            return json.loads(cast(Any, cached))
         
         logger.debug(f"Cache miss for session: {session_id}")
         return None
@@ -541,7 +523,7 @@ def get_cached_sessions_list() -> Optional[list]:
         
         if cached:
             logger.debug("Cache hit for sessions list")
-            return json.loads(cached)
+            return json.loads(cast(Any, cached))
         
         logger.debug("Cache miss for sessions list")
         return None
@@ -638,7 +620,7 @@ def cleanup_dead_letter_queue():
         dlq = redis_client.lrange("sshbox:dead_letter:destroy", 0, -1)
         
         cleaned = []
-        for entry_json in dlq:
+        for entry_json in cast(List[Any], dlq):
             try:
                 entry = json.loads(entry_json)
                 cleanup_at = datetime.fromisoformat(entry.get("auto_cleanup_at", ""))
@@ -787,7 +769,7 @@ async def health_check():
         logger.warning(f"Database health check failed: {e}")
     
     # Check Redis
-    if REDIS_AVAILABLE:
+    if REDIS_AVAILABLE and redis_client:
         try:
             redis_client.ping()
         except Exception as e:
@@ -871,7 +853,6 @@ async def get_metrics_endpoint():
 
 
 @app.post("/request", summary="Request a new SSH box", tags=["Sessions"], response_model=ConnectionResponse)
-@limiter.limit("5/minute") if RATE_LIMITING_ENABLED else lambda x: x
 async def handle_request(req: Request, request: TokenRequest, background_tasks: BackgroundTasks):
     """
     Request a new ephemeral SSH box
@@ -894,7 +875,7 @@ async def handle_request(req: Request, request: TokenRequest, background_tasks: 
             logger.warning(f"Invalid token received: {error_msg}")
             record_request("/request", success=False)
             record_error("token_validation_failed")
-            raise TokenValidationError(reason=error_msg)
+            raise TokenValidationError(reason=error_msg or "Invalid token")
         
         # Extract TTL from token (use minimum of token TTL and requested TTL)
         token_ttl = int(request.token.split(':')[1])
@@ -1062,7 +1043,6 @@ async def handle_request(req: Request, request: TokenRequest, background_tasks: 
 
 
 @app.get("/sessions", summary="List active sessions", tags=["Sessions"])
-@limiter.limit("10/minute") if RATE_LIMITING_ENABLED else lambda x: x
 async def list_sessions(req: Request, status_filter: Optional[str] = None):
     """
     List sessions with optional status filter
@@ -1077,7 +1057,7 @@ async def list_sessions(req: Request, status_filter: Optional[str] = None):
             cached = redis_client.get(cache_key)
             if cached:
                 logger.debug(f"Cache hit for {cache_key}")
-                return json.loads(cached)
+                return json.loads(cast(Any, cached))
         
         # Cache miss - query database
         with get_db_cursor() as cur:
@@ -1126,7 +1106,6 @@ async def list_sessions(req: Request, status_filter: Optional[str] = None):
 
 
 @app.post("/destroy", summary="Destroy a specific session", tags=["Sessions"])
-@limiter.limit("20/hour") if RATE_LIMITING_ENABLED else lambda x: x
 async def destroy_session(req: Request, destroy_request: DestroyRequest):
     """
     Destroy a specific session

@@ -700,7 +700,8 @@ class FirecrackerProvisioner:
 
             # Get VM IP using discovery mechanism
             # Extract MAC from config (or use default)
-            vm_mac = network_interface.get("guest_mac", f"{FirecrackerIPDiscovery.DEFAULT_MAC_PREFIX}:00:00:01")
+            vm_mac = config["network-interfaces"][0].get("guest_mac", f"{FirecrackerIPDiscovery.DEFAULT_MAC_PREFIX}:00:00:01")
+
             
             # Try to discover IP, with static IP allocation as fallback
             try:

@@ -227,17 +227,18 @@ async def export_session(session_id: str, format: str = "json"):
         session_id: Session to export
         format: Export format (json, csv, asciinema)
     """
-    from gateway_fastapi import get_db_cursor, validate_session_id
+    from api.db_utils import get_db_cursor
+    from api.security import InputValidator
     
     try:
-        validate_session_id(session_id)
+        InputValidator.validate_session_id(session_id)
     except Exception as e:
         raise HTTPException(status_code=400, detail=str(e))
     
     # Get session data
     with get_db_cursor() as cur:
         cur.execute("""
-            SELECT * FROM sessions WHERE session_id = %s
+            SELECT * FROM sessions WHERE session_id = ?
         """, (session_id,))
         row = cur.fetchone()
         
@@ -277,12 +278,13 @@ async def export_session(session_id: str, format: str = "json"):
     
     elif format == "asciinema":
         # Export recording if available
-        from session_recorder import get_recording
+        from api.session_recorder import SessionRecorder
         
-        recording = get_recording(session_id)
-        if recording:
+        recorder = SessionRecorder()
+        recording_data = recorder.get_recording(session_id)
+        if recording_data and "content" in recording_data:
             return Response(
-                content=recording,
+                content=recording_data["content"],
                 media_type="application/json",
                 headers={
                     "Content-Disposition": f"attachment; filename=session_{session_id}.cast"
@@ -310,12 +312,12 @@ async def get_export_url(
     # For S3-backed storage, generate pre-signed URL
     # For local storage, generate temporary download token
     
-    from gateway_fastapi import get_db_cursor
+    from api.db_utils import get_db_cursor
     
     with get_db_cursor() as cur:
         cur.execute("""
             SELECT container_name, user_id FROM sessions 
-            WHERE session_id = %s
+            WHERE session_id = ?
         """, (session_id,))
         row = cur.fetchone()
         
@@ -378,11 +380,12 @@ async def import_session(
     new_session_id = f"imported-{secrets.token_hex(8)}"
     
     # Create session with imported data
+    from api.db_utils import get_db_cursor
     with get_db_cursor() as cur:
         cur.execute("""
             INSERT INTO sessions 
             (session_id, user_id, container_name, status, created_at, profile)
-            VALUES (%s, %s, %s, %s, %s, %s)
+            VALUES (?, ?, ?, ?, ?, ?)
         """, (
             new_session_id,
             user_id,
@@ -402,7 +405,7 @@ async def import_session(
 @router.get("/sessions/export/stats", tags=["Sessions"])
 async def get_export_stats():
     """Get export/import statistics"""
-    from gateway_fastapi import get_db_cursor
+    from api.db_utils import get_db_cursor
     
     with get_db_cursor() as cur:
         # Count exports (would need exports table in production)
@@ -453,13 +456,13 @@ def patch_gateway_functions():
             with gateway_fastapi.get_db_cursor() as cur:
                 cur.execute("""
                     SELECT user_id, profile FROM sessions 
-                    WHERE session_id = %s
+                    WHERE session_id = ?
                 """, (session_id,))
                 row = cur.fetchone()
                 if row:
                     user_id, profile = row
-        except Exception:
-            pass
+        except Exception as e:
+            logger.debug(f"Failed to get session data for cache invalidation: {e}")
         
         original_invalidate(session_id)
         invalidate_extended_cache(
