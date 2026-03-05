@@ -74,10 +74,10 @@ try:
     from slowapi import Limiter, _rate_limit_exceeded_handler
     from slowapi.util import get_remote_address
     from slowapi.errors import RateLimitExceeded
-    
+
     limiter = Limiter(key_func=get_remote_address)
     app.state.limiter = limiter
-    
+
     def rate_limit_handler(request: Request, exc: RateLimitExceeded) -> JSONResponse:
         return JSONResponse(
             status_code=429,
@@ -87,13 +87,30 @@ try:
                 "retry_after": getattr(exc, 'retry_after', None)
             }
         )
-    
+
     app.add_exception_handler(RateLimitExceeded, rate_limit_handler)
     RATE_LIMITING_ENABLED = True
+    
+    # WARNING: Alert operator if rate limiting disabled in production
+    environment = os.environ.get('SSHBOX_ENVIRONMENT', 'development')
+    if environment == 'production' and not RATE_LIMITING_ENABLED:
+        logger.warning(
+            "⚠️  CRITICAL: RATE LIMITING DISABLED IN PRODUCTION! "
+            "Install slowapi: pip install slowapi"
+        )
+        
 except ImportError:
     logger.warning("slowapi not installed, rate limiting disabled")
     RATE_LIMITING_ENABLED = False
     limiter = None
+    
+    # WARNING: Alert operator if rate limiting disabled in production
+    environment = os.environ.get('SSHBOX_ENVIRONMENT', 'development')
+    if environment == 'production':
+        logger.warning(
+            "⚠️  CRITICAL: RATE LIMITING DISABLED IN PRODUCTION! "
+            "Install slowapi: pip install slowapi"
+        )
 
 
 # ============================================================================
@@ -394,47 +411,117 @@ def get_db_cursor():
 # Background Tasks
 # ============================================================================
 
-def schedule_destroy(container_name: str, session_id: str, ttl: int):
-    """Schedule container destruction after TTL with proper error handling"""
+from tenacity import retry, stop_after_attempt, wait_exponential
+
+@retry(
+    stop=stop_after_attempt(3),
+    wait=wait_exponential(multiplier=1, min=5, max=60),
+    reraise=True
+)
+def destroy_container_with_retry(container_name: str) -> subprocess.CompletedProcess:
+    """
+    Destroy container with retry logic.
     
+    Retries 3 times with exponential backoff: 5s, 10s, 20s
+    Raises exception after all retries exhausted.
+    """
+    return subprocess.run(
+        ['./scripts/box-destroy.sh', container_name],
+        capture_output=True,
+        text=True,
+        timeout=30
+    )
+
+
+def add_to_dead_letter_queue(session_id: str, container_name: str, error: str):
+    """
+    Add failed destruction to dead letter queue for manual intervention.
+    
+    Stores in Redis for later review and manual cleanup.
+    """
+    if redis_client is None:
+        logger.error(f"Dead letter queue unavailable (Redis not connected): {session_id}")
+        return
+    
+    try:
+        dead_letter_entry = {
+            "session_id": session_id,
+            "container_name": container_name,
+            "error": error,
+            "timestamp": datetime.now(timezone.utc).isoformat(),
+            "retry_attempts": 3,
+            "status": "pending_manual_cleanup"
+        }
+        
+        redis_client.lpush(
+            "sshbox:dead_letter:destroy",
+            json.dumps(dead_letter_entry)
+        )
+        
+        # Keep only last 1000 entries
+        redis_client.ltrim("sshbox:dead_letter:destroy", 0, 999)
+        
+        logger.warning(f"Added to dead letter queue: {session_id}")
+        
+    except Exception as e:
+        logger.error(f"Failed to add to dead letter queue: {e}")
+
+
+def schedule_destroy(container_name: str, session_id: str, ttl: int):
+    """Schedule container destruction after TTL with retry logic and dead letter queue"""
+
     def destroy_task():
-        """Background task to destroy container after TTL"""
+        """Background task to destroy container after TTL with retries"""
         try:
             logger.info(f"Scheduled destruction for session {session_id} in {ttl} seconds")
             time.sleep(ttl)
-            
+
             logger.info(f"Executing destruction for session {session_id}, container {container_name}")
-            
+
             # Validate container name to prevent command injection
             if not validate_container_name(container_name):
                 logger.error(f"Invalid container name: {container_name}")
                 return
-            
-            result = subprocess.run(
-                ['./scripts/box-destroy.sh', container_name],
-                capture_output=True,
-                text=True,
-                timeout=30
-            )
 
-            if result.returncode != 0:
-                logger.error(f"Destroy script failed for container {container_name}: {result.stderr}")
-                record_error("destroy_script_failed")
-            else:
-                logger.info(f"Successfully destroyed container {container_name}")
-                record_session_destruction()
+            # Use retry logic for destruction
+            try:
+                result = destroy_container_with_retry(container_name)
+                
+                if result.returncode != 0:
+                    logger.error(f"Destroy script failed for container {container_name}: {result.stderr}")
+                    record_error("destroy_script_failed")
+                    
+                    # Add to dead letter queue after retries exhausted
+                    add_to_dead_letter_queue(session_id, container_name, result.stderr)
+                else:
+                    logger.info(f"Successfully destroyed container {container_name}")
+                    record_session_destruction()
+
+            except Exception as retry_error:
+                logger.error(f"Destroy failed after all retries for session {session_id}: {retry_error}")
+                record_error("destroy_retry_exhausted")
+                
+                # Add to dead letter queue
+                add_to_dead_letter_queue(session_id, container_name, str(retry_error))
 
             # Update session status in DB
             update_session_status(session_id, 'destroyed')
             logger.info(f"Session {session_id} marked as destroyed in database")
-            
+
         except subprocess.TimeoutExpired:
             logger.error(f"Destroy script timed out for session {session_id}")
             record_error("destroy_timeout")
+            
+            # Add to dead letter queue
+            add_to_dead_letter_queue(session_id, container_name, "Script timeout")
+            
         except Exception as e:
             logger.error(f"Error in destroy task for session {session_id}: {e}")
             record_error("destroy_task_error")
-    
+            
+            # Add to dead letter queue
+            add_to_dead_letter_queue(session_id, container_name, str(e))
+
     # Start background thread
     thread = threading.Thread(target=destroy_task, daemon=True)
     thread.start()
@@ -456,8 +543,9 @@ def update_session_status(session_id: str, status: str):
     try:
         with get_db_cursor() as cur:
             # Use parameterized query - NO f-strings
+            # Use timezone-aware datetime (Python 3.12+ compatible)
             query = "UPDATE sessions SET status = ?, ended_at = ? WHERE session_id = ?"
-            cur.execute(query, (status, datetime.utcnow().isoformat(), session_id))
+            cur.execute(query, (status, datetime.now(timezone.utc).isoformat(), session_id))
     except Exception as e:
         logger.error(f"Failed to update session status: {e}")
 
@@ -619,11 +707,13 @@ async def handle_request(req: Request, request: TokenRequest, background_tasks: 
         # Extract TTL from token (use minimum of token TTL and requested TTL)
         token_ttl = int(request.token.split(':')[1])
         effective_ttl = min(token_ttl, request.ttl)
-        
-        # Generate session ID
-        session_id = f"box_{int(time.time() * 1000)}"  # millisecond precision
+
+        # Generate session ID with UUID suffix for guaranteed uniqueness
+        # Prevents collision under high concurrency (millisecond timestamp + 8 char UUID)
+        import uuid
+        session_id = f"box_{int(time.time() * 1000)}_{uuid.uuid4().hex[:8]}"
         container_name = f"box_{session_id}"
-        
+
         # Validate session ID
         validate_session_id(session_id)
         
@@ -693,7 +783,7 @@ async def handle_request(req: Request, request: TokenRequest, background_tasks: 
         # Add session ID to connection info
         connection_info['session_id'] = session_id
         
-        # Store session metadata in DB
+        # Store session metadata in DB and cache in Redis
         try:
             with get_db_cursor() as cur:
                 # Use parameterized query - NO f-strings
@@ -711,8 +801,27 @@ async def handle_request(req: Request, request: TokenRequest, background_tasks: 
                     request.profile,
                     effective_ttl,
                     'active',
-                    datetime.utcnow().isoformat()
+                    datetime.now(timezone.utc).isoformat()
                 ))
+            
+            # Cache session state in Redis for fast lookups (TTL: 5 minutes)
+            if redis_client:
+                session_state = {
+                    'session_id': session_id,
+                    'container_name': container_name,
+                    'host': connection_info.get('host'),
+                    'port': connection_info.get('port'),
+                    'user': connection_info.get('user'),
+                    'profile': request.profile,
+                    'status': 'active',
+                    'created_at': datetime.now(timezone.utc).isoformat()
+                }
+                redis_client.setex(
+                    f"session:{session_id}",
+                    300,  # 5 minute cache
+                    json.dumps(session_state)
+                )
+                
         except Exception as e:
             logger.error(f"Failed to store session metadata: {e}")
             record_error("database_insert_failed")
@@ -765,10 +874,20 @@ async def handle_request(req: Request, request: TokenRequest, background_tasks: 
 async def list_sessions(req: Request, status_filter: Optional[str] = None):
     """
     List sessions with optional status filter
-    
+
     - **status**: Filter by status (active, destroyed, ended)
     """
     try:
+        # Try Redis cache first for better performance
+        cache_key = f"sessions:{status_filter or 'all'}"
+        
+        if redis_client:
+            cached = redis_client.get(cache_key)
+            if cached:
+                logger.debug(f"Cache hit for {cache_key}")
+                return json.loads(cached)
+        
+        # Cache miss - query database
         with get_db_cursor() as cur:
             if status_filter:
                 # Use parameterized query
@@ -783,7 +902,7 @@ async def list_sessions(req: Request, status_filter: Optional[str] = None):
             sessions = []
             for row in rows:
                 session = dict(zip(columns, row))
-                
+
                 # Calculate time left for active sessions
                 if session.get('status') == 'active' and session.get('ttl') and session.get('created_at'):
                     created_at = session['created_at']
@@ -792,16 +911,23 @@ async def list_sessions(req: Request, status_filter: Optional[str] = None):
                             created_at = datetime.fromisoformat(created_at.replace('Z', '').split('.')[0])
                         except ValueError:
                             pass
-                    
+
                     if isinstance(created_at, datetime):
                         expires_at = created_at + timedelta(seconds=session['ttl'])
-                        time_left = max(0, int((expires_at - datetime.utcnow()).total_seconds()))
+                        # Use timezone-aware datetime
+                        time_left = max(0, int((expires_at - datetime.now(timezone.utc)).total_seconds()))
                         session['time_left'] = time_left
-                
+
                 sessions.append(session)
 
-            return {"sessions": sessions, "count": len(sessions)}
+            result = {"sessions": sessions, "count": len(sessions)}
             
+            # Cache result for 1 minute
+            if redis_client:
+                redis_client.setex(cache_key, 60, json.dumps(result))
+            
+            return result
+
     except Exception as e:
         logger.error(f"Error listing sessions: {e}")
         raise HTTPException(status_code=500, detail=f"Error listing sessions: {e}")
