@@ -1,0 +1,391 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <title>sshBox - Web Terminal</title>
+    <link rel="stylesheet" href="https://cdn.jsdelivr.net/npm/xterm@5.3.0/css/xterm.css" />
+    <style>
+        * {
+            margin: 0;
+            padding: 0;
+            box-sizing: border-box;
+        }
+
+        body {
+            font-family: -apple-system, BlinkMacSystemFont, 'Segoe UI', Roboto, Oxygen, Ubuntu, sans-serif;
+            background: #1a1a2e;
+            color: #eee;
+            height: 100vh;
+            display: flex;
+            flex-direction: column;
+        }
+
+        .header {
+            background: #16213e;
+            padding: 10px 20px;
+            display: flex;
+            justify-content: space-between;
+            align-items: center;
+            border-bottom: 1px solid #0f3460;
+        }
+
+        .header h1 {
+            font-size: 1.2rem;
+            color: #e94560;
+        }
+
+        .header .session-info {
+            display: flex;
+            gap: 15px;
+            align-items: center;
+            font-size: 0.9rem;
+        }
+
+        .header .status {
+            display: flex;
+            align-items: center;
+            gap: 5px;
+        }
+
+        .status-dot {
+            width: 8px;
+            height: 8px;
+            border-radius: 50%;
+            background: #666;
+        }
+
+        .status-dot.connected {
+            background: #4ade80;
+            box-shadow: 0 0 8px #4ade80;
+        }
+
+        .status-dot.connecting {
+            background: #fbbf24;
+            animation: pulse 1s infinite;
+        }
+
+        .status-dot.disconnected {
+            background: #ef4444;
+        }
+
+        @keyframes pulse {
+            0%, 100% { opacity: 1; }
+            50% { opacity: 0.5; }
+        }
+
+        .main-container {
+            flex: 1;
+            display: flex;
+            overflow: hidden;
+        }
+
+        .terminal-container {
+            flex: 1;
+            padding: 10px;
+            overflow: hidden;
+        }
+
+        #terminal {
+            width: 100%;
+            height: 100%;
+        }
+
+        .sidebar {
+            width: 280px;
+            background: #16213e;
+            border-left: 1px solid #0f3460;
+            display: flex;
+            flex-direction: column;
+        }
+
+        .sidebar-section {
+            padding: 15px;
+            border-bottom: 1px solid #0f3460;
+        }
+
+        .sidebar-section h3 {
+            font-size: 0.85rem;
+            color: #888;
+            margin-bottom: 10px;
+            text-transform: uppercase;
+            letter-spacing: 0.5px;
+        }
+
+        .sidebar-section .value {
+            font-size: 0.95rem;
+            color: #eee;
+        }
+
+        .sidebar-section .actions {
+            display: flex;
+            flex-direction: column;
+            gap: 8px;
+        }
+
+        .btn {
+            background: #0f3460;
+            color: #eee;
+            border: none;
+            padding: 8px 12px;
+            border-radius: 4px;
+            cursor: pointer;
+            font-size: 0.85rem;
+            transition: background 0.2s;
+        }
+
+        .btn:hover {
+            background: #1a4a7a;
+        }
+
+        .btn-primary {
+            background: #e94560;
+        }
+
+        .btn-primary:hover {
+            background: #ff6b6b;
+        }
+
+        .btn-danger {
+            background: #dc2626;
+        }
+
+        .btn-danger:hover {
+            background: #ef4444;
+        }
+
+        .timer {
+            font-size: 1.5rem;
+            font-weight: bold;
+            color: #e94560;
+        }
+
+        .timer.warning {
+            color: #fbbf24;
+            animation: pulse 1s infinite;
+        }
+
+        .chat-container {
+            flex: 1;
+            display: flex;
+            flex-direction: column;
+            min-height: 200px;
+        }
+
+        .chat-messages {
+            flex: 1;
+            overflow-y: auto;
+            padding: 10px;
+            font-size: 0.85rem;
+        }
+
+        .chat-message {
+            margin-bottom: 8px;
+            padding: 5px 8px;
+            border-radius: 4px;
+            background: #0f3460;
+        }
+
+        .chat-message.observer {
+            background: #1a4a7a;
+        }
+
+        .chat-input {
+            display: flex;
+            padding: 10px;
+            border-top: 1px solid #0f3460;
+        }
+
+        .chat-input input {
+            flex: 1;
+            background: #0f3460;
+            border: none;
+            padding: 8px 12px;
+            border-radius: 4px;
+            color: #eee;
+            font-size: 0.85rem;
+        }
+
+        .chat-input input:focus {
+            outline: none;
+            background: #1a4a7a;
+        }
+
+        .chat-input button {
+            margin-left: 8px;
+        }
+
+        .modal {
+            display: none;
+            position: fixed;
+            top: 0;
+            left: 0;
+            width: 100%;
+            height: 100%;
+            background: rgba(0, 0, 0, 0.7);
+            justify-content: center;
+            align-items: center;
+            z-index: 1000;
+        }
+
+        .modal.show {
+            display: flex;
+        }
+
+        .modal-content {
+            background: #16213e;
+            padding: 30px;
+            border-radius: 8px;
+            max-width: 400px;
+            width: 90%;
+        }
+
+        .modal-content h2 {
+            margin-bottom: 15px;
+            color: #e94560;
+        }
+
+        .modal-content input {
+            width: 100%;
+            padding: 10px;
+            margin: 10px 0;
+            background: #0f3460;
+            border: none;
+            border-radius: 4px;
+            color: #eee;
+            font-size: 1rem;
+        }
+
+        .modal-content .actions {
+            display: flex;
+            gap: 10px;
+            margin-top: 20px;
+        }
+
+        .modal-content .actions button {
+            flex: 1;
+        }
+
+        .hidden {
+            display: none !important;
+        }
+
+        /* Interview mode specific */
+        .interview-banner {
+            background: linear-gradient(90deg, #e94560, #0f3460);
+            padding: 10px;
+            text-align: center;
+            font-weight: bold;
+        }
+
+        .observer-badge {
+            background: #e94560;
+            padding: 2px 8px;
+            border-radius: 12px;
+            font-size: 0.75rem;
+            margin-left: 5px;
+        }
+    </style>
+</head>
+<body>
+    <!-- Interview Banner (shown in interview mode) -->
+    <div id="interview-banner" class="interview-banner hidden">
+        🎯 Technical Interview Session - <span id="interview-problem">Loading...</span>
+    </div>
+
+    <!-- Header -->
+    <div class="header">
+        <h1>📦 sshBox <span style="font-size: 0.8rem; color: #888;">Web Terminal</span></h1>
+        <div class="session-info">
+            <div class="status">
+                <div id="status-dot" class="status-dot"></div>
+                <span id="status-text">Disconnected</span>
+            </div>
+            <div>
+                Session: <span id="session-id">-</span>
+            </div>
+            <div id="observer-badge" class="observer-badge hidden">OBSERVER</div>
+        </div>
+    </div>
+
+    <!-- Main Container -->
+    <div class="main-container">
+        <!-- Terminal -->
+        <div class="terminal-container">
+            <div id="terminal"></div>
+        </div>
+
+        <!-- Sidebar -->
+        <div class="sidebar">
+            <!-- Session Info -->
+            <div class="sidebar-section">
+                <h3>Session Details</h3>
+                <div class="value">
+                    <div>Profile: <strong id="profile-value">-</strong></div>
+                    <div>Host: <strong id="host-value">-</strong></div>
+                    <div>Port: <strong id="port-value">-</strong></div>
+                </div>
+            </div>
+
+            <!-- Timer -->
+            <div class="sidebar-section">
+                <h3>Time Remaining</h3>
+                <div id="timer" class="timer">--:--</div>
+            </div>
+
+            <!-- Actions -->
+            <div class="sidebar-section">
+                <h3>Actions</h3>
+                <div class="actions">
+                    <button id="btn-connect" class="btn btn-primary">Connect</button>
+                    <button id="btn-disconnect" class="btn btn-danger" disabled>Disconnect</button>
+                    <button id="btn-share" class="btn">Share Session</button>
+                    <button id="btn-copy-link" class="btn">Copy Observer Link</button>
+                </div>
+            </div>
+
+            <!-- Chat (Interview Mode) -->
+            <div class="sidebar-section chat-container">
+                <h3>Interview Chat</h3>
+                <div id="chat-messages" class="chat-messages"></div>
+                <div class="chat-input">
+                    <input type="text" id="chat-input" placeholder="Send message..." />
+                    <button id="btn-send" class="btn btn-primary">Send</button>
+                </div>
+            </div>
+        </div>
+    </div>
+
+    <!-- Connect Modal -->
+    <div id="connect-modal" class="modal">
+        <div class="modal-content">
+            <h2>Connect to sshBox</h2>
+            <p>Enter your invite token to connect:</p>
+            <input type="text" id="token-input" placeholder="Enter invite token..." />
+            <div class="actions">
+                <button id="btn-modal-connect" class="btn btn-primary">Connect</button>
+                <button id="btn-modal-cancel" class="btn">Cancel</button>
+            </div>
+        </div>
+    </div>
+
+    <!-- Share Modal -->
+    <div id="share-modal" class="modal">
+        <div class="modal-content">
+            <h2>Share Session</h2>
+            <p>Share this link for observers:</p>
+            <input type="text" id="share-link" readonly />
+            <div class="actions">
+                <button id="btn-copy-share" class="btn btn-primary">Copy Link</button>
+                <button id="btn-close-share" class="btn">Close</button>
+            </div>
+        </div>
+    </div>
+
+    <!-- Scripts -->
+    <script src="https://cdn.jsdelivr.net/npm/xterm@5.3.0/lib/xterm.min.js"></script>
+    <script src="https://cdn.jsdelivr.net/npm/xterm-addon-fit@0.8.0/lib/xterm-addon-fit.min.js"></script>
+    <script src="https://cdn.jsdelivr.net/npm/xterm-addon-web-links@0.9.0/lib/xterm-addon-web-links.min.js"></script>
+    <script src="/static/terminal.js"></script>
+</body>
+</html>

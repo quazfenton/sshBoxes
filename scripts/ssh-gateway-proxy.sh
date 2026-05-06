@@ -1,10 +1,32 @@
 #!/usr/bin/env bash
+# =============================================================================
+# DEPRECATED - SECURITY WARNING
+# =============================================================================
+# This script has been DEPRECATED due to security vulnerabilities:
+# - Command injection risks from unquoted variable expansion
+# - Unsafe Python code execution via stdin
+# - Lack of proper input validation
+#
+# MIGRATION REQUIRED: Use the FastAPI gateway instead:
+#   - api/gateway_fastapi.py - Production-ready HTTP gateway
+#   - Proper input validation, HMAC token validation, security controls
+#
+# To migrate:
+#   1. Stop using this script immediately
+#   2. Start the FastAPI gateway: python -m api.gateway_fastapi
+#   3. Update clients to use the FastAPI endpoints
+#
+# This script will be removed in a future release.
+# =============================================================================
 # Minimal HTTP endpoint to accept token exchange: POST /request with JSON {"token":"...","pubkey":"...","profile":"dev","ttl":300}
 # Returns JSON with host/port/user/session_id or error.
 set -euo pipefail
 PORT="${GATEWAY_PORT:-8080}"
 SECRET="${GATEWAY_SECRET:-replace-with-secret}"  # HMAC secret for token validation
 PROVISIONER="./box-provision.sh"
+
+# SECURITY WARNING: This bash-based HTTP server is inherently insecure
+# Do NOT use in production environments
 
 # Use a proper approach to handle HTTP requests with netcat
 while true; do

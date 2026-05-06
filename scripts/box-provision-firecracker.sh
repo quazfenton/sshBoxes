@@ -97,13 +97,48 @@ EOF
 
 # Start Firecracker VM
 firecracker --api-sock "$FIRECRACKER_SOCKET" --config-file "${SESSION_DIR}/config.json" &
+FIRECRACKER_PID=$!
 
-# Wait a moment for the VM to start
-sleep 5
+# Wait for VM to boot and discover IP address
+echo "Waiting for VM to boot..." >&2
+sleep 10
 
-# Get the IP address assigned to the VM (this would need to be determined based on your network setup)
-# For now, we'll assume it gets an IP from DHCP or you have a mapping system
-VM_IP="172.16.0.10"  # This would be determined dynamically in a real implementation
+# Method 1: Try to get IP from ARP table
+VM_IP=""
+VM_MAC="AA:FC:00:00:00:01"
+
+# Scan ARP table for VM MAC address
+if command -v arp &> /dev/null; then
+    for i in {1..30}; do
+        VM_IP=$(arp -an 2>/dev/null | grep -i "$VM_MAC" | grep -oE '[0-9]+\.[0-9]+\.[0-9]+\.[0-9]+' | head -1)
+        if [[ -n "$VM_IP" ]]; then
+            echo "Discovered VM IP from ARP: $VM_IP" >&2
+            break
+        fi
+        sleep 2
+    done
+fi
+
+# Method 2: Try DHCP lease file
+if [[ -z "$VM_IP" ]]; then
+    for lease_file in /var/lib/misc/dnsmasq.leases /var/lib/dnsmasq/dnsmasq.leases /tmp/dnsmasq.leases; do
+        if [[ -f "$lease_file" ]]; then
+            VM_IP=$(grep -i "$VM_MAC" "$lease_file" 2>/dev/null | awk '{print $3}' | head -1)
+            if [[ -n "$VM_IP" ]]; then
+                echo "Discovered VM IP from DHCP: $VM_IP" >&2
+                break
+            fi
+        fi
+    done
+fi
+
+# Fallback: Use default IP with warning
+if [[ -z "$VM_IP" ]]; then
+    echo "WARNING: Could not discover VM IP, using default 172.16.0.10" >&2
+    echo "Configure DHCP lease monitoring for better accuracy." >&2
+    VM_IP="172.16.0.10"
+fi
+
 SSH_PORT=22
 
 readonly SCRIPT_DIR="$(cd -- "$(dirname -- "${BASH_SOURCE[0]}")" && pwd -P)"

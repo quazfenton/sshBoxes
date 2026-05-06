@@ -1,184 +1,545 @@
-# sshBox - Ephemeral SSH Boxes
+# sshBox - The Interview Operating System
 
-Provide instantly-provisioned, secure, short-lived Linux bastions ("ephemeral boxes") accessible via a single SSH command (e.g., `ssh box.new`) for debugging, interviews, demos, and safe experiments. Boxes auto-destroy after N minutes, require no guest signup, and are auditable and policy-controlled.
+**Purpose-built ephemeral environments for technical hiring and secure development**
 
-## Key Features
+[![License: MIT](https://img.shields.io/badge/License-MIT-yellow.svg)](https://opensource.org/licenses/MIT)
+[![Python 3.8+](https://img.shields.io/badge/python-3.8+-blue.svg)](https://www.python.org/downloads/)
+[![FastAPI](https://img.shields.io/badge/FastAPI-0.104+-green.svg)](https://fastapi.tiangolo.com/)
+[![Product Hunt](https://img.shields.io/badge/Product-Hunt-orange.svg)](https://producthunt.com)
 
-- ✅ **Instant provisioning** (<= 3s to usable shell)
-- ✅ **Strong security**: least-privilege, ephemeral credentials, per-session isolation
-- ✅ **Auditable**: recorded session metadata, optional session recording
-- ✅ **Resource control & limits**: quotas, time-to-live (TTL), CPU/memory caps
-- ✅ **Simple UX**: single-step access for guests, integration with org SSO for staff
-- ✅ **Cost control**: reuse base images, snapshot layering, and aggressive teardown
+---
 
-## Architecture
+## 🎯 What is sshBox?
 
-The sshBox system consists of several components:
+sshBox provides **instantly-provisioned, secure, short-lived Linux environments** accessible via SSH or web browser. Originally built for debugging and experiments, it's now the **Interview Operating System** - purpose-built for technical hiring with observer modes, recording, and scoring.
 
-```
-[User] --> [SSH Gateway] --> [Provisioner] --> [Runtime (Container/VM)]
-     |            |              |
-     v            v              v
-[Invite CLI] [Token Validation] [Session Recording]
-```
+### Key Value Propositions
 
-### Components
+| For | Benefit |
+|-----|---------|
+| **Recruiting Teams** | No more lost candidates to environment setup issues |
+| **Engineering Managers** | See candidates code in real-time with full recordings |
+| **Candidates** | Zero setup - just click and code |
+| **Security Teams** | Full audit trail, ephemeral credentials, auto-destroy |
 
-1. **SSH Gateway** (FastAPI): Validates tokens and routes connections
-2. **Provisioner**: Creates ephemeral runtimes (containers or Firecracker microVMs)
-3. **Invite CLI**: Generates signed tokens and manages connections
-4. **Session Recorder**: Records and audits SSH sessions
-5. **Database**: Stores session metadata and audit logs
+---
 
-## Quick Start
+## 🚀 Quick Start
 
-### Prerequisites
-
-- Docker
-- Python 3.8+
-- SSH client
-
-### Setup
-
-1. Clone the repository:
-   ```bash
-   git clone <repository-url>
-   cd sshBoxes
-   ```
-
-2. Install dependencies:
-   ```bash
-   pip install -r requirements.txt
-   ```
-
-3. Build the base image:
-   ```bash
-   cd images
-   docker build -t sshbox-base:latest -f Dockerfile .
-   ```
-
-4. Start the services:
-   ```bash
-   docker-compose up -d
-   ```
-
-### Creating an Invite
-
-As a host, create an invite token:
+### 1. Start Services
 
 ```bash
-# Create an invite for a dev box lasting 30 minutes
-./scripts/box-invite.py create --secret "your-secret-key" --profile dev --ttl 1800
+# Start all services (Docker required)
+docker-compose up -d
+
+# Start web terminal bridge
+python web/websocket_bridge.py
+
+# Start interview API
+python api/interview_api.py
 ```
 
-### Connecting to a Box
-
-As a guest, use the token to connect:
+### 2. Schedule Your First Interview
 
 ```bash
-# Connect using the token you received
-./scripts/box-invite.py connect --token "dev:1800:1234567890:abcd1234:none:somesignature" --gateway http://localhost:8080
+# Via CLI
+./scripts/sshbox-interview.py schedule \
+    --candidate candidate@example.com \
+    --interviewer interviewer@company.com \
+    --problem two_sum \
+    --language python
+
+# Via API
+curl -X POST http://localhost:8083/interviews/schedule \
+    -H "Content-Type: application/json" \
+    -d '{
+        "candidate_email": "candidate@example.com",
+        "interviewer_email": "interviewer@company.com",
+        "problem_id": "two_sum",
+        "language": "python"
+    }'
 ```
 
-## Runtime Options
+### 3. Connect via Web Terminal
 
-The system supports both container and microVM runtimes:
+Open browser to: `http://localhost:3000/static/index.html`
 
-### Container Runtime (Default)
-- Fast startup (~1-2 seconds)
-- Lower resource overhead
-- Good for development and testing
+---
 
-### Firecracker MicroVM Runtime
-- Stronger isolation
-- Better security guarantees
-- Slightly higher startup time (~3-5 seconds)
-- Requires additional setup (see `docs/firecracker_implementation.md`)
+## 📋 Features
 
-## Configuration
+### 🎓 Interview Mode
 
-### Environment Variables
+Purpose-built for technical interviews with everything you need:
 
-| Variable | Description | Default |
-|----------|-------------|---------|
-| `GATEWAY_SECRET` | Secret key for token validation | `replace-with-secret` |
-| `GATEWAY_PORT` | Port for the gateway service | `8080` |
-| `DB_HOST` | Database host | `localhost` |
-| `DB_NAME` | Database name | `sshbox` |
-| `DB_USER` | Database user | `sshbox_user` |
-| `DB_PASS` | Database password | `sshbox_pass` |
+- ✅ **Pre-configured Problems** - Two Sum, Valid Parentheses, Merge Intervals + custom
+- ✅ **Observer View** - Watch candidates code in real-time
+- ✅ **Interview Chat** - Communicate without leaving the terminal
+- ✅ **Session Recording** - Full terminal recording for later review
+- ✅ **Scoring System** - 0-100 scale with feedback
+- ✅ **REST API** - Full API for integration with ATS systems
+- ✅ **CLI Interface** - Command-line management for power users
 
-### Profiles
+### 🌐 Web Terminal
 
-The system supports different profiles with varying capabilities:
+Browser-based SSH access without any client installation:
 
-- `dev`: Standard development environment with internet access
-- `debug`: Includes cloud CLIs and debugging tools
-- `secure-shell`: Isolated environment with no network access
-- `privileged`: High-privilege environment for staff (approval required)
+- ✅ **Xterm.js Terminal** - Full terminal emulation with 256 colors
+- ✅ **WebSocket Bridge** - Low-latency real-time streaming
+- ✅ **Shareable Links** - Send observer links to stakeholders
+- ✅ **Auto-Recording** - All sessions recorded automatically
+- ✅ **Mobile Friendly** - Works on tablets and phones
 
-See `schemas/profile_schema.yaml` for detailed configuration options.
+### 🔒 Enterprise Security
 
-## Security Model
+Production-ready security features:
 
-- **Ephemeral keys**: Keys generated client-side and never stored server-side
-- **Network isolation**: Default deny egress with configurable allowlists
-- **Least privilege**: Per-profile capability restrictions
-- **Automatic cleanup**: Resources destroyed after TTL expiration
-- **Session recording**: Optional recording of all SSH sessions
+- ✅ **Token Authentication** - HMAC-SHA256 with constant-time validation
+- ✅ **Input Validation** - All inputs validated and sanitized
+- ✅ **SQL Injection Prevention** - Parameterized queries only
+- ✅ **Path Traversal Prevention** - Safe path validation
+- ✅ **Command Injection Prevention** - Shell script hardening
+- ✅ **Quota Management** - Per-user and per-org limits
+- ✅ **Policy Engine** - OPA integration for fine-grained access control
+- ✅ **Circuit Breakers** - Fault tolerance and graceful degradation
+- ✅ **Session Recording** - Full audit trail
+- ✅ **Rate Limiting** - Per-endpoint rate limits
 
-## Data Schemas
+### 📊 Monitoring & Observability
 
-The system uses standardized schemas for different data types:
+Full visibility into system health:
 
-- **Invite Token Format**: `profile:ttl:timestamp:recipient_hash:notes_hash:signature`
-- **Session Metadata**: See `schemas/session_metadata_schema.json`
-- **Profile Configuration**: See `schemas/profile_schema.yaml`
+- ✅ **Prometheus Metrics** - Comprehensive metrics collection
+- ✅ **Grafana Dashboards** - Pre-built dashboards
+- ✅ **20+ Alert Rules** - Proactive alerting for issues
+- ✅ **Health Endpoints** - `/health` on all services
+- ✅ **Structured Logging** - JSON logs for production
 
-## Development
+### 🏗️ Infrastructure
 
-### Running Tests
+Flexible deployment options:
+
+- ✅ **Docker Containers** - Fast, lightweight provisioning
+- ✅ **Firecracker MicroVMs** - Stronger isolation when needed
+- ✅ **Production HA** - High-availability docker-compose
+- ✅ **PostgreSQL** - Persistent session storage
+- ✅ **Redis** - Caching and coordination
+- ✅ **OPA** - Policy engine integration
+
+---
+
+## 🏗️ Architecture
+
+```
+┌─────────────────────────────────────────────────────────────────────────┐
+│                           sshBox Architecture                            │
+├─────────────────────────────────────────────────────────────────────────┤
+│                                                                          │
+│  CLIENTS                                                                 │
+│  ┌──────────────┐  ┌─────────────────┐  ┌─────────────────┐            │
+│  │ SSH Client   │  │ Web Terminal    │  │ Interview CLI   │            │
+│  │              │  │ (Xterm.js)      │  │                 │            │
+│  └──────┬───────┘  └────────┬────────┘  └────────┬────────┘            │
+│         │                   │                    │                      │
+│         │ SSH               │ WebSocket          │ HTTP                 │
+│         │                   │                    │                      │
+│         └───────────────────┼────────────────────┘                      │
+│                             │                                           │
+│                             v                                           │
+│  ┌──────────────────────────────────────────────────────────────────┐  │
+│  │                      API Gateway Layer                            │  │
+│  │  ┌──────────────┐  ┌──────────────┐  ┌──────────────┐           │  │
+│  │  │ SSH Gateway  │  │WebSocket     │  │ Interview    │           │  │
+│  │  │ (FastAPI)    │  │Bridge        │  │API           │           │  │
+│  │  │ :8080        │  │(:3000)       │  │(:8083)       │           │  │
+│  │  └──────┬───────┘  └──────┬───────┘  └──────┬───────┘           │  │
+│  └─────────┼─────────────────┼─────────────────┼───────────────────┘  │
+│            │                 │                 │                       │
+│            └─────────────────┼─────────────────┘                       │
+│                              │                                         │
+│                              v                                         │
+│  ┌──────────────────────────────────────────────────────────────────┐  │
+│  │                      Core Services                                │  │
+│  │  ┌──────────────┐  ┌──────────────┐  ┌──────────────┐           │  │
+│  │  │ Provisioner  │  │ Policy       │  │ Quota        │           │  │
+│  │  │              │  │ Engine (OPA) │  │ Manager      │           │  │
+│  │  └──────────────┘  └──────────────┘  └──────────────┘           │  │
+│  │  ┌──────────────┐  ┌──────────────┐  ┌──────────────┐           │  │
+│  │  │ Session      │  │ Circuit      │  │ Metrics      │           │  │
+│  │  │ Recorder     │  │ Breakers     │  │ Collector    │           │  │
+│  │  └──────────────┘  └──────────────┘  └──────────────┘           │  │
+│  └──────────────────────────────────────────────────────────────────┘  │
+│                              │                                         │
+│                              v                                         │
+│  ┌──────────────────────────────────────────────────────────────────┐  │
+│  │                      Runtime Layer                                │  │
+│  │  ┌──────────────┐  ┌──────────────┐  ┌──────────────┐           │  │
+│  │  │ Docker       │  │ Firecracker  │  │ Interview    │           │  │
+│  │  │ Containers   │  │ MicroVMs     │  │ Sessions     │           │  │
+│  │  └──────────────┘  └──────────────┘  └──────────────┘           │  │
+│  └──────────────────────────────────────────────────────────────────┘  │
+│                              │                                         │
+│                              v                                         │
+│  ┌──────────────────────────────────────────────────────────────────┐  │
+│  │                      Data Layer                                   │  │
+│  │  ┌──────────────┐  ┌──────────────┐  ┌──────────────┐           │  │
+│  │  │ PostgreSQL   │  │ Redis        │  │ Recordings   │           │  │
+│  │  │ (Sessions)   │  │ (Cache)      │  │ (Files)      │           │  │
+│  │  └──────────────┘  └──────────────┘  └──────────────┘           │  │
+│  └──────────────────────────────────────────────────────────────────┘  │
+│                                                                          │
+└─────────────────────────────────────────────────────────────────────────┘
+```
+
+---
+
+## 📦 Installation
+
+### Self-Hosted (Development)
 
 ```bash
-# Run unit tests
-python -m unittest discover tests/ -v
+# Clone repository
+git clone https://github.com/sshbox/sshbox.git
+cd sshbox
 
-# Run API tests
-python -m pytest tests/test_api.py -v
+# Install dependencies
+pip install -r requirements.txt
+
+# Start services
+docker-compose up -d
+
+# Start web terminal
+python web/websocket_bridge.py
+
+# Start interview API
+python api/interview_api.py
 ```
 
-### Project Structure
+### Self-Hosted (Production)
+
+```bash
+# Use production docker-compose
+docker-compose -f docker-compose.prod.yml up -d
+
+# Access services
+# Gateway: http://localhost:8080
+# Web Terminal: http://localhost:3000
+# Interview API: http://localhost:8083
+# Grafana: http://localhost:3001
+# Prometheus: http://localhost:9090
+```
+
+### Managed Service
+
+Coming soon at [sshbox.io](https://sshbox.io)
+
+---
+
+## 🎓 Interview Mode
+
+### Scheduling an Interview
+
+#### Via CLI
+
+```bash
+# Schedule interview
+./scripts/sshbox-interview.py schedule \
+    --candidate candidate@example.com \
+    --interviewer interviewer@company.com \
+    --problem two_sum \
+    --language python \
+    --ttl 3600
+
+# Start interview session
+./scripts/sshbox-interview.py start --interview-id int_abc123
+
+# Complete with score
+./scripts/sshbox-interview.py complete \
+    --interview-id int_abc123 \
+    --score 85 \
+    --feedback "Excellent problem-solving skills!"
+```
+
+#### Via API
+
+```bash
+# Schedule
+curl -X POST http://localhost:8083/interviews/schedule \
+    -H "Content-Type: application/json" \
+    -d '{
+        "candidate_email": "candidate@example.com",
+        "interviewer_email": "interviewer@company.com",
+        "problem_id": "two_sum",
+        "language": "python"
+    }'
+
+# Start
+curl -X POST http://localhost:8083/interviews/int_abc123/start
+
+# Complete
+curl -X POST http://localhost:8083/interviews/int_abc123/complete \
+    -H "Content-Type: application/json" \
+    -d '{"score": 85, "feedback": "Great work!"}'
+```
+
+### Available Problems
+
+| ID | Title | Difficulty | Language |
+|----|-------|------------|----------|
+| `two_sum` | Two Sum | Easy | Python |
+| `valid_parentheses` | Valid Parentheses | Easy | Python |
+| `merge_intervals` | Merge Intervals | Medium | Python |
+
+### Adding Custom Problems
+
+```python
+from api.interview_mode import get_interview_manager, InterviewProblem
+
+manager = get_interview_manager()
+
+problem = InterviewProblem(
+    id="custom_binary_search",
+    title="Binary Search",
+    description="Implement binary search...",
+    difficulty="medium",
+    language="python",
+    starter_code="def binary_search(arr, target):\n    pass\n",
+    test_cases=[
+        {"input": [[1, 2, 3, 4, 5], 3], "expected": 2}
+    ],
+    expected_output=[2]
+)
+
+manager.add_custom_problem(problem)
+```
+
+---
+
+## 🌐 Web Terminal
+
+### Access Methods
+
+#### Browser
 
 ```
-sshBoxes/
-├── api/                    # API implementations (FastAPI)
-├── scripts/               # Shell scripts for provisioning
-├── images/                # Dockerfiles
-├── schemas/               # Data schemas
-├── docs/                  # Documentation
-├── tests/                 # Test suites
-├── docker-compose.yml     # Docker orchestration
-└── requirements.txt       # Dependencies
+http://localhost:3000/static/index.html
 ```
 
-## Production Deployment
+#### With Token
 
-For production deployments, consider:
+```
+http://localhost:3000/static/index.html?token=YOUR_TOKEN
+```
 
-1. Using HTTPS with TLS termination
-2. Implementing proper secrets management (HashiCorp Vault, AWS Secrets Manager)
-3. Setting up monitoring and alerting
-4. Configuring backup strategies for audit logs
-5. Implementing rate limiting and abuse prevention
+#### Observer View
 
-## Contributing
+```
+http://localhost:3000/static/index.html?session=SESSION_ID&observer=true
+```
 
-1. Fork the repository
-2. Create a feature branch
-3. Make your changes
-4. Add tests for new functionality
-5. Submit a pull request
+### Features
 
-## License
+- **Full Terminal Emulation** - Xterm.js with 256 colors
+- **Real-time Streaming** - WebSocket-based low latency
+- **Session Recording** - Automatic recording of all sessions
+- **Shareable Links** - Generate observer links
+- **Interview Chat** - Built-in messaging
 
-MIT License - see the LICENSE file for details.
+---
+
+## 🔒 Security Model
+
+### Authentication
+
+- **HMAC Token Validation** - SHA-256 signatures
+- **Constant-Time Comparison** - Prevents timing attacks
+- **Token Expiration** - Configurable TTL (default: 5 min)
+- **Replay Prevention** - Timestamp validation
+
+### Authorization
+
+- **Policy Engine (OPA)** - Fine-grained access control
+- **Quota Management** - Per-user and per-org limits
+- **Role-Based Access** - default, premium, admin, trial roles
+- **Profile Restrictions** - Whitelist-based profile access
+
+### Input Validation
+
+- **Session ID Validation** - Alphanumeric only
+- **SSH Key Validation** - Format and option checking
+- **Path Traversal Prevention** - Safe path resolution
+- **Command Injection Prevention** - Shell script hardening
+- **SQL Injection Prevention** - Parameterized queries
+
+### Audit & Compliance
+
+- **Session Recording** - Full terminal recording
+- **Audit Logs** - All actions logged
+- **Metrics Collection** - Prometheus-compatible
+- **SOC 2 Ready** - Enterprise compliance features
+
+---
+
+## 📊 Monitoring
+
+### Prometheus Metrics
+
+| Metric | Description |
+|--------|-------------|
+| `sshbox_requests_total` | Total HTTP requests |
+| `sshbox_sessions_created` | Sessions created |
+| `sshbox_sessions_destroyed` | Sessions destroyed |
+| `sshbox_avg_provision_time` | Average provision time |
+| `sshbox_errors_total` | Error count by type |
+| `sshbox_circuit_breaker_state` | Circuit breaker states |
+
+### Grafana Dashboards
+
+Pre-built dashboards for:
+- Session metrics
+- Request latency
+- Error rates
+- Circuit breaker status
+- Database performance
+- Redis metrics
+
+### Alerts
+
+20+ alert rules including:
+- High error rate
+- High latency
+- Circuit breaker open
+- Database connection issues
+- Redis memory usage
+- Recording storage low
+- Token validation failures
+
+---
+
+## 🔌 Integrations
+
+### ATS Systems
+
+- **Greenhouse** - Auto-schedule interviews
+- **Lever** - Candidate pipeline
+- **Workday** - Enterprise recruiting
+
+### Developer Tools
+
+- **GitHub** - PR review environments
+- **GitLab** - MR review
+- **VS Code** - Remote development (planned)
+
+### Communication
+
+- **Slack** - Interview notifications
+- **Microsoft Teams** - Status updates
+- **Email** - Candidate invites
+
+### Identity
+
+- **Okta** - SSO integration (planned)
+- **Auth0** - Authentication (planned)
+- **Azure AD** - Enterprise SSO (planned)
+
+---
+
+## 📊 Pricing
+
+| Tier | Price | Features |
+|------|-------|----------|
+| **Developer** | Free | 10 boxes/month, 30min TTL, basic recording |
+| **Pro** | $10/mo | 100 boxes/month, 2hr TTL, full recording |
+| **Team** | $50/mo | Unlimited boxes, collaboration, observer mode |
+| **Enterprise** | Custom | SSO, audit logs, on-premise, SLA |
+
+---
+
+## 📖 Documentation
+
+| Document | Description |
+|----------|-------------|
+| [Web Terminal & Interview Guide](docs/WEB_TERMINAL_INTERVIEW_GUIDE.md) | Complete user guide |
+| [Implementation Summary](docs/IMPLEMENTATION_SUMMARY.md) | Technical implementation details |
+| [Final Review Summary](docs/FINAL_REVIEW_SUMMARY.md) | Review findings and recommendations |
+| [Comprehensive Improvement Plan](docs/COMPREHENSIVE_IMPROVEMENT_PLAN.md) | Technical improvement plan |
+| [Firecracker Implementation](docs/firecracker_implementation.md) | MicroVM setup guide |
+| [Performance Optimization](docs/performance_optimization.md) | Performance tuning |
+
+---
+
+## 🧪 Testing
+
+```bash
+# Run all tests
+pytest tests/ -v
+
+# Security tests
+pytest tests/test_security.py -v
+
+# With coverage
+pytest tests/ --cov=api --cov-report=html
+```
+
+---
+
+## 🤝 Contributing
+
+We welcome contributions! See [CONTRIBUTING.md](CONTRIBUTING.md) for details.
+
+### Development Setup
+
+```bash
+# Clone and setup
+git clone https://github.com/sshbox/sshbox.git
+cd sshbox
+pip install -r requirements.txt
+
+# Run tests
+pytest tests/ -v
+
+# Start development services
+docker-compose up -d
+```
+
+---
+
+## 📝 License
+
+MIT License - see [LICENSE](LICENSE) for details.
+
+---
+
+## 🙋 Support
+
+| Channel | Link |
+|---------|------|
+| Documentation | https://docs.sshbox.io |
+| GitHub Issues | https://github.com/sshbox/sshbox/issues |
+| Discord | https://discord.gg/sshbox |
+| Twitter | @sshbox_io |
+| Email | support@sshbox.io |
+
+---
+
+## 📈 Roadmap
+
+### Q2 2026
+- [ ] VS Code integration (code-server)
+- [ ] Multi-user collaboration
+- [ ] Plugin system for profiles
+
+### Q3 2026
+- [ ] Kubernetes operator
+- [ ] SSO integration (SAML, OIDC)
+- [ ] Compliance dashboard
+
+### Q4 2026
+- [ ] Mobile app (iOS/Android)
+- [ ] Marketplace for profiles/problems
+- [ ] Cloud provider integrations (AWS, GCP)
+
+---
+
+*Last updated: 2026-03-03*  
+*Version: 2.0.0*
